@@ -1,0 +1,187 @@
+---
+version: 2
+plan:
+  project-key: CL
+  key: VOIT
+  name: VpnLibs - Run tests
+stages:
+  - Default Stage:
+      manual: false
+      final: false
+      jobs:
+        - Run integration test
+Run integration test:
+  key: JOB1
+  description: Runs C++ tests
+  docker:
+    image: adguard/core-libs:latest
+    volumes:
+      ${bamboo.working.directory}: ${bamboo.working.directory}
+      ${bamboo.tmp.directory}: ${bamboo.tmp.directory}
+    docker-run-arguments: [ ]
+  tasks:
+    - !include docker-clean.yaml
+    - checkout:
+        repository: vpn-libs
+        path: vpn-libs
+        force-clean-build: 'true'
+        description: Checkout client
+    - checkout:
+        repository: vpn-libs-endpoint
+        path: vpn-libs-endpoint
+        force-clean-build: 'true'
+        description: Checkout server
+    - script:
+        interpreter: SHELL
+        scripts:
+          - conan remote add -i 0 art ${bamboo.conanRepoUrl} || true
+        description: conan remote
+    - script:
+        interpreter: SHELL
+        scripts:
+          - |-
+            set -x
+            
+            cd ./examples/my_vpn
+            
+            OPENSSL_CONF_FILE="openssl.conf"
+            KEY_FILE_NAME="key.pem"
+            CERT_FILE_NAME="cert.pem"
+            
+            if [ ! -f "$KEY_FILE_NAME" ] || [ ! -f "$CERT_FILE_NAME" ]; then
+              openssl req -config "$OPENSSL_CONF_FILE" -new -x509 -sha256 -newkey rsa:2048 -nodes -days 1000 \
+              -keyout "$KEY_FILE_NAME" -out "$CERT_FILE_NAME" -subj "/C=de/CN=www.example.com"
+            fi
+            
+            cargo build
+        description: Build vpn-libs-endpoint
+        working-dir: vpn-libs-endpoint
+    - script:
+        interpreter: SHELL
+        scripts:
+          - |-
+            set -x
+            
+            mkdir -p build && cd build
+
+            cmake -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_FLAGS='-fsanitize=address' \
+            -DCMAKE_CXX_FLAGS='-fsanitize=address -stdlib=libc++' \
+            -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address' \
+            ..
+
+            make -j 4 standalone_client
+        description: Build vpn-libs
+        working-dir: vpn-libs
+
+    - script:
+        interpreter: SHELL
+        description: Run integration test
+        scripts:
+          - |-
+            set -x
+
+            export SRC_ROOT=${PWD}
+
+            echo "Integration test start"
+
+            declare -i has_error
+            has_error=0
+
+            check_error() {
+                if [ $? -eq 0 ] 
+                then
+                    echo "...Passed"
+                else
+                    has_error=has_error+1
+                    echo "...Failed"
+                fi
+            }
+
+            cd vpn-libs-endpoint/examples/my_vpn
+            ../../target/debug/vpn_endpoint vpn.conf > /dev/null 2>&1 &
+            echo "Start endpoint"
+            sleep 3
+
+            cd $SRC_ROOT/vpn-libs/build/core
+            cp $SRC_ROOT/vpn-libs/core/test/standalone_client/standalone_client.conf local_socks.conf
+            ./standalone_client -s -c local_socks.conf -l trace > /dev/null 2>&1 &
+            echo "Start client"
+            sleep 3
+
+            echo "Check connection..."
+            nc -vz 127.0.0.1 7777 >/dev/null
+            check_error
+            sleep 1
+
+            echo "HTTP request -> 1.1.1.1, ipv4..."
+            curl -x socks5://127.0.0.1:7777 1.1.1.1 >/dev/null
+            check_error
+            sleep 1
+
+            echo "HTTP request -> adguard.com, ipv4..."
+            curl -x socks5://127.0.0.1:7777 -4 http://adguard.com >/dev/null
+            check_error
+            sleep 1
+
+            echo "HTTPs request -> adguard.com, ipv4..."
+            curl -x socks5://127.0.0.1:7777 -4 https://adguard.com >/dev/null
+            check_error
+            sleep 1
+
+            echo "HTTP request -> ipv6.google.com, ipv6..."
+            curl -x socks5h://127.0.0.1:7777 http://ipv6.google.com >/dev/null
+            check_error
+            sleep 1
+
+            echo "HTTPS request -> ipv6.google.com, ipv6..."
+            curl -x socks5h://127.0.0.1:7777 https://ipv6.google.com >/dev/null
+            check_error
+            sleep 1
+
+            echo "Download 100MB file..."
+            curl -x socks5://127.0.0.1:7777 -O https://speed.hetzner.de/100MB.bin >/dev/null
+            check_error
+            sleep 1
+
+            if [ $has_error -gt 0 ]
+            then
+                echo "There were errors"
+                kill -15 $(jobs -p) >/dev/null 2>&1
+                exit 1
+            else
+                echo "All tests passed"
+                kill -15 $(jobs -p) >/dev/null 2>&1
+                exit 0
+            fi
+  final-tasks:
+    - script:
+        interpreter: SHELL
+        scripts:
+          - |-
+            conan user -p "${bamboo_artifactoryPassword}" -r art "${bamboo_artifactoryUser}" > upload.txt 2>&1
+            conan upload -r art --all -c '*' > upload.txt 2>&1
+            echo conan upload finished with status $?
+            conan remove -f '*'
+        description: Conan upload and cleanup
+  requirements:
+    - adg-privileged-docker
+  artifact-subscriptions: [ ]
+repositories:
+  - vpn-libs:
+      scope: global
+branches:
+  create: for-pull-request
+  delete:
+    after-deleted-days: 4
+    after-inactive-days: 30
+  integration:
+    push-on-success: false
+    merge-from: VpnLibs - Run tests
+  link-to-jira: true
+notifications: [ ]
+labels: [ ]
+other:
+  concurrent-build-plugin: system-default

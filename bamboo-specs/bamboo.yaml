@@ -1,0 +1,6 @@
+---
+  !include 'increment-version.yaml'
+---
+  !include 'run-tests.yaml'
+---
+  !include 'run-integration-test.yaml'

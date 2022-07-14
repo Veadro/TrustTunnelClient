@@ -1,0 +1,86 @@
+---
+version: 2
+plan:
+  project-key: CL
+  key: VRT
+  name: VpnLibs - Run tests
+stages:
+  - Default Stage:
+      manual: false
+      final: false
+      jobs:
+        - Run C++ tests
+Run C++ tests:
+  key: JOB1
+  description: Runs C++ tests
+  docker:
+    image: adguard/core-libs:latest
+    volumes:
+      ${bamboo.working.directory}: ${bamboo.working.directory}
+      ${bamboo.tmp.directory}: ${bamboo.tmp.directory}
+    docker-run-arguments: [ ]
+  tasks:
+    - !include docker-clean.yaml
+    - checkout:
+        force-clean-build: 'true'
+        repository: vpn-libs
+        path: vpn-libs
+        description: Checkout Default Repository
+    - script:
+        interpreter: SHELL
+        scripts:
+          - conan remote add -i 0 art ${bamboo.conanRepoUrl} || true
+        description: conan remote
+    - script:
+        interpreter: SHELL
+        scripts:
+          - |-
+            set -x
+
+            mkdir -p build
+            cd build
+
+            cmake -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_FLAGS='-fsanitize=address' \
+            -DCMAKE_CXX_FLAGS='-fsanitize=address -stdlib=libc++' \
+            -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address' \
+            ..
+
+            make -j 4 tests && ctest -D ExperimentalTest --no-compress-output
+        description: Compile and run tests
+        working-dir: vpn-libs
+  final-tasks:
+    - any-task:
+        plugin-key: fr.cstb.bamboo.plugins.ctest.bamboo-ctest-plugin:test
+        configuration:
+          testFilePathPattern: '**/Testing/*/*.xml'
+    - script:
+        interpreter: SHELL
+        scripts:
+          - |-
+            conan user -p "${bamboo_artifactoryPassword}" -r art "${bamboo_artifactoryUser}" > upload.txt 2>&1
+            conan upload -r art --all -c '*' > upload.txt 2>&1
+            echo conan upload finished with status $?
+            conan remove -f '*'
+        description: Conan upload and cleanup
+  requirements:
+    - adg-privileged-docker
+  artifact-subscriptions: [ ]
+repositories:
+  - vpn-libs:
+      scope: global
+branches:
+  create: for-pull-request
+  delete:
+    after-deleted-days: 4
+    after-inactive-days: 30
+  integration:
+    push-on-success: false
+    merge-from: VpnLibs - Run tests
+  link-to-jira: true
+notifications: [ ]
+labels: [ ]
+other:
+  concurrent-build-plugin: system-default
