@@ -88,13 +88,13 @@ static std::optional<std::string> read_file_to_str(const std::string &filename) 
 }
 
 static void split_default_route(std::vector<ag::CidrRange> &routes, std::string_view route) {
-    for (auto idx = 0; idx < routes.size(); ++idx) {
+    for (size_t idx = 0; idx < routes.size(); ++idx) {
         if (routes[idx].to_string() == route) {
             routes.erase(routes.begin() + idx);
 
-            auto splitted = ag::CidrRange(route).split();
-            routes.push_back(splitted.value().first);
-            routes.push_back(splitted.value().second);
+            auto split = ag::CidrRange(route).split();
+            routes.push_back(split.value().first);
+            routes.push_back(split.value().second);
         }
     }
 }
@@ -236,7 +236,7 @@ static std::mutex g_connect_result_guard;
 static std::condition_variable g_connect_barrier;
 static std::atomic_bool g_stop = false;
 
-static void sighandler(int sig) {
+static void sighandler(int /*sig*/) {
     signal(SIGINT, SIG_DFL);
     signal(SIGTERM, SIG_DFL);
 
@@ -420,6 +420,7 @@ return -1;
         case LT_TUN:
             setup_routes(g_tun_info);
             listener = vpn_create_tun_listener(g_vpn, &g_vpn_tun_listener_config);
+            break;
         case LT_SOCKS:
             listener = vpn_create_socks_listener(g_vpn, &g_vpn_socks_listener_config);
             break;
@@ -528,7 +529,7 @@ return -1;
         signal(SIGINT, sighandler);
         signal(SIGTERM, sighandler);
         signal(SIGPIPE, SIG_IGN);
-        struct sigaction act = {SIG_IGN};
+        struct sigaction act{};
         sigaction(SIGPIPE, &act, nullptr);
 
         g_options.add_options()("s", "Skip verify certificate", cxxopts::value<bool>()->default_value("false"))(

@@ -697,8 +697,12 @@ std::optional<VpnConnectAction> Tunnel::finalize_connect_action(
     } else if (const NamePort *dst = std::get_if<NamePort>(&conn->addr.dst); dst != nullptr) {
         switch (this->vpn->domain_filter.match_domain(dst->name)) {
         case DFMS_SUSPECT_EXCLUSION:
+#ifndef NDEBUG
             assert(0);
+            break;
+#else
             [[fallthrough]];
+#endif
         case DFMS_DEFAULT:
             out = request_result.action;
             break;

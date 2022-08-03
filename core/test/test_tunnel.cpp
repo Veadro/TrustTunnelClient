@@ -328,7 +328,7 @@ TEST_F(MigrationTest, ClosedDuringMigration) {
 
 TEST_F(MigrationTest, ConnectionFailed) {
     // 4) Failed to connect to host directly
-    ServerError err = {bypass_id, ag::utils::AG_ECONNREFUSED, "refused"};
+    ServerError err = {bypass_id, {ag::utils::AG_ECONNREFUSED, "refused"}};
     tun.upstream_handler(redirect_upstream, SERVER_EVENT_ERROR, &err);
     ASSERT_EQ(redirect_upstream->connections.end(),
             std::find(redirect_upstream->connections.begin(), redirect_upstream->connections.end(), redirect_id));

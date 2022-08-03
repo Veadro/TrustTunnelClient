@@ -83,6 +83,11 @@ set(TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/test)
 add_executable(test_standalone_client EXCLUDE_FROM_ALL ${TEST_DIR}/test_standalone_client.cpp)
 target_link_libraries(test_standalone_client vpnlibs_core)
 
+if (NOT MSVC)
+add_compile_options(-Wall -Wextra -Werror -Wimplicit-fallthrough
+        -Wno-missing-field-initializers -Wno-unused-parameter -Wno-c99-designator -Wno-unused-private-field)
+endif()
+
 add_executable(standalone_client EXCLUDE_FROM_ALL ${TEST_DIR}/standalone_client/standalone_client.cpp)
 target_link_libraries(standalone_client vpnlibs_core CONAN_PKG::cxxopts)
 target_link_libraries(standalone_client CONAN_PKG::native_libs_common)

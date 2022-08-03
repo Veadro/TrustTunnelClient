@@ -133,7 +133,7 @@ void DirectUpstream::on_icmp_request(IcmpEchoRequestEvent &) {
 void DirectUpstream::cancel_icmp_request(const IcmpRequestKey &, uint16_t) {
 }
 
-class UpstreamInfo {};
+struct UpstreamInfo {};
 class Http2Upstream {};
 UpstreamMultiplexer::UpstreamMultiplexer(int id, const VpnUpstreamProtocolConfig &, size_t, MakeUpstream)
         : ServerUpstream(id) {
