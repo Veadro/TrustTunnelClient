@@ -1,18 +1,22 @@
 ---
 version: 2
+
 plan:
   project-key: CL
-  key: VRT
-  name: VpnLibs - Run tests
+  key: VLRT
+  name: VpnLibs - Run Tests
+
 stages:
   - Default Stage:
       manual: false
       final: false
       jobs:
-        - Run C++ tests
-Run C++ tests:
-  key: JOB1
-  description: Runs C++ tests
+        - Run tests on Linux
+        - Run tests on Windows
+        - Run tests on macOS
+
+Run tests on Linux:
+  key: RTL
   docker:
     image: adguard/core-libs:latest
     volumes:
@@ -23,7 +27,7 @@ Run C++ tests:
     - !include docker-clean.yaml
     - checkout:
         force-clean-build: 'true'
-        repository: vpn-libs
+        repository: core-libs/vpn-libs
         path: vpn-libs
         description: Checkout Default Repository
     - script:
@@ -68,9 +72,119 @@ Run C++ tests:
   requirements:
     - adg-privileged-docker
   artifact-subscriptions: [ ]
+
+Run tests on Windows:
+  key: RTW
+  tasks:
+    - checkout:
+        description: Checkout Default Repository
+        force-clean-build: 'true'
+    - script:
+        description: Build tests
+        interpreter: BINSH_OR_CMDEXE
+        scripts:
+          - |-
+            call vcvars32
+            
+            if exist build\ rmdir /s /q build || exit /b 1
+            mkdir build || exit /b 1
+            cd build || exit /b 1
+            
+            cmake -DCMAKE_BUILD_TYPE=Debug ^
+                -DCMAKE_C_COMPILER="C:/Program Files (x86)/LLVM/bin/clang-cl.exe" ^
+                -DCMAKE_CXX_COMPILER="C:/Program Files (x86)/LLVM/bin/clang-cl.exe" ^
+                -DCMAKE_C_FLAGS_DEBUG=/MT ^
+                -DCMAKE_CXX_FLAGS_DEBUG=/MT ^
+                -G "Ninja" ^
+                ..
+            
+            ninja tests || exit /b 1
+    - script:
+        description: Run tests
+        interpreter: BINSH_OR_CMDEXE
+        scripts:
+          - |-
+            call vcvars32
+            cd build || exit /b 1
+            ctest -D ExperimentalTest --no-compress-output || exit /b 1
+  final-tasks:
+    - any-task:
+        plugin-key: fr.cstb.bamboo.plugins.ctest.bamboo-ctest-plugin:test
+        configuration:
+          testFilePathPattern: '**/Testing/*/*.xml'
+        description: Parse tests result
+    - script:
+        interpreter: SHELL
+        scripts:
+          - |-
+            REM Upload built binaries
+            conan upload -r art --all -c "*" > upload.txt 2>&1
+            REM Clean up local cache
+            conan remove -f '*'
+            conan remove --locks
+  requirements:
+    - system.builder.msbuild.MSBuild v15.0 (32bit)
+  artifact-subscriptions: [ ]
+
+Run tests on macOS:
+  key: RTM
+  tasks:
+    - checkout:
+        description: Checkout Default Repository
+        force-clean-build: 'true'
+    - script:
+        description: Build tests
+        interpreter: SHELL
+        scripts:
+          - |-
+            # Clean up local cache
+            conan remove -f '*'
+
+            # Build tests
+            mkdir -p build
+            cd build
+            cmake -DCMAKE_BUILD_TYPE=Debug -GNinja \
+                -DTARGET_OS=macos \
+                -DCMAKE_C_COMPILER=clang \
+                -DCMAKE_CXX_COMPILER=clang++ \
+                -DCMAKE_CXX_FLAGS="-fsanitize=address -stdlib=libc++" \
+                -DCMAKE_C_FLAGS="-fsanitize=address" \
+                -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address' \
+                ..
+
+            ninja tests
+    - script:
+        description: Run tests
+        interpreter: SHELL
+        scripts:
+          - |-
+            # Run tests
+            cd build || exit 1
+            ctest -D ExperimentalTest --no-compress-output
+  final-tasks:
+    - any-task:
+        plugin-key: fr.cstb.bamboo.plugins.ctest.bamboo-ctest-plugin:test
+        configuration:
+          testFilePathPattern: '**/Testing/*/*.xml'
+        description: Parse tests result
+    - script:
+        interpreter: SHELL
+        scripts:
+          - |-
+            # Upload built
+            conan upload -r art --all -c '*' > upload.txt 2>&1
+            # Clean up local cache
+            conan remove -f '*'
+            # Conan remove locks
+            conan remove --locks
+  requirements:
+    - system.builder.xcode.macOS 10.14
+  artifact-subscriptions: [ ]
+
 repositories:
-  - vpn-libs:
+  - core-libs/vpn-libs:
       scope: global
+
 branches:
   create: for-pull-request
   delete:
@@ -80,7 +194,10 @@ branches:
     push-on-success: false
     merge-from: VpnLibs - Run tests
   link-to-jira: true
+
 notifications: [ ]
+
 labels: [ ]
+
 other:
   concurrent-build-plugin: system-default

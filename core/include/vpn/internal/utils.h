@@ -1,0 +1,230 @@
+#pragma once
+
+#include <codecvt>
+#include <cstring>
+#include <locale>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <variant>
+#include <vector>
+
+#include <event2/event.h>
+#include <magic_enum.hpp>
+
+#include "net/tcp_socket.h"
+#include "net/udp_socket.h"
+#include "vpn/platform.h"
+#include "vpn/utils.h"
+#include "vpn/vpn.h"
+
+#define CONN_BUFFER_FILE_NAME_FMT "cbuf-%" PRIu64 "-%" PRIu64 ".dat"
+
+namespace ag {
+
+static constexpr uint64_t NON_ID = UINT64_MAX;
+static constexpr size_t HTTP_OK_STATUS = 200;
+static constexpr size_t HTTP_AUTH_REQUIRED_STATUS = 407;
+static constexpr char HTTP_AUTH_REQUIRED_MSG[] = "Authorization Required";
+
+struct ConnectRequestResult {
+    uint64_t id = NON_ID;
+    // nullopt means we aren't completely sure if a connection should be redirected
+    std::optional<ag::VpnConnectAction> action;
+    std::string appname;
+    int uid = 0;
+
+    [[nodiscard]] std::string to_string() const {
+        return str_format("ID=%" PRIu64 " action=%s appname=%s", this->id,
+                magic_enum::enum_name(this->action.value_or(ag::VPN_CA_DEFAULT)).data(), this->appname.c_str());
+    }
+};
+
+struct NamePort {
+    std::string name;
+    int port = 0;
+};
+
+inline bool operator==(const NamePort &lh, const NamePort &rh) {
+    return lh.port == rh.port && lh.name == rh.name;
+}
+
+inline bool operator!=(const NamePort &lh, const NamePort &rh) {
+    return !(lh == rh);
+}
+
+using TunnelAddress = std::variant<std::monostate, sockaddr_storage, NamePort>;
+
+struct TunnelAddressPair {
+    sockaddr_storage src = {};
+    TunnelAddress dst = {};
+
+    TunnelAddressPair() = default;
+
+    TunnelAddressPair(const sockaddr *s, const TunnelAddress *d)
+            : src(ag::sockaddr_to_storage(s))
+            , dst(*d) {
+    }
+
+    TunnelAddressPair(const sockaddr *s, const sockaddr *d)
+            : src(ag::sockaddr_to_storage(s))
+            , dst(ag::sockaddr_to_storage(d)) {
+    }
+};
+
+inline bool operator==(const TunnelAddressPair &lh, const TunnelAddressPair &rh) {
+    if (0 != memcmp(&lh.src, &rh.src, sizeof(lh.src))) {
+        return false;
+    }
+    if (lh.dst.index() != rh.dst.index()) {
+        return false;
+    }
+    if (const sockaddr_storage *ld = std::get_if<sockaddr_storage>(&lh.dst),
+            *rd = std::get_if<sockaddr_storage>(&rh.dst);
+            ld && rd) {
+        return sockaddr_equals((sockaddr *) ld, (sockaddr *) rd);
+    }
+    if (const NamePort *ld = std::get_if<NamePort>(&lh.dst), *rd = std::get_if<NamePort>(&rh.dst); ld && rd) {
+        return *ld == *rd;
+    }
+    return false;
+}
+
+inline bool operator!=(const TunnelAddressPair &lh, const TunnelAddressPair &rh) {
+    return !(lh == rh);
+}
+
+static const TunnelAddress HEALTH_CHECK_HOST(NamePort{"_check", 0});
+
+std::string tunnel_addr_to_str(const TunnelAddress *addr);
+
+/**
+ * Get pointer value and null it
+ */
+template <typename T, typename = std::enable_if_t<std::is_pointer<T>::value>>
+T load_and_null(T &x) {
+    return std::exchange(x, nullptr);
+}
+
+using TcpSocketPtr = ag::DeclPtr<TcpSocket, &tcp_socket_destroy>;
+using UdpSocketPtr = ag::DeclPtr<UdpSocket, &udp_socket_destroy>;
+using EventPtr = ag::DeclPtr<event, &event_free>;
+
+struct SockAddrTag {
+    sockaddr_storage addr = {};
+    std::string appname;
+};
+
+inline bool operator==(const SockAddrTag &lh, const SockAddrTag &rh) {
+    return ag::sockaddr_equals((sockaddr *) &lh.addr, (sockaddr *) &rh.addr) && lh.appname == rh.appname;
+}
+
+/**
+ * Check if string starts with prefix
+ */
+static inline constexpr bool starts_with(std::string_view str, std::string_view prefix) {
+    return str.substr(0, prefix.length()) == prefix;
+}
+
+/**
+ * Contruct full path for connection buffer file
+ * @param base_path directory path
+ * @param id connection id
+ */
+std::string make_buffer_file_path(const char *base_path, uint64_t id);
+
+/**
+ * Remove connection buffer files which had not been removed at the end of VPN run for some reason
+ * @param base_path directory path to scan
+ */
+void clean_up_buffer_files(const char *base_path);
+
+static inline std::string safe_path_name(const char *str) {
+    return str;
+}
+
+static inline std::string safe_path_name(const wchar_t *str) {
+    return std::wstring_convert<std::codecvt_utf8<wchar_t>>().to_bytes(str);
+}
+
+ag::VpnUpstreamConfig vpn_upstream_config_clone(const ag::VpnUpstreamConfig *src);
+
+void vpn_upstream_config_destroy(ag::VpnUpstreamConfig *config);
+
+template <std::size_t N, std::size_t... IS>
+constexpr std::array<const char *, N> cpp_to_cstr_array(
+        const std::array<std::string_view, N> &arr, std::index_sequence<IS...>) {
+    return {{arr[IS].data()...}};
+}
+
+template <std::size_t N, std::size_t... IS>
+constexpr std::array<const char *, N> cpp_to_cstr_array(const std::array<std::string_view, N> &arr) {
+    return cpp_to_cstr_array(arr, std::make_index_sequence<N>());
+}
+
+template <typename E, std::size_t N = magic_enum::enum_count<E>()>
+constexpr std::array<const char *, N> make_enum_names_array() {
+    return cpp_to_cstr_array<N>(magic_enum::enum_names<E>());
+}
+
+void log_headers(const ag::Logger &log, uint64_t stream_id, const HttpHeaders *headers, const char *msg);
+
+ag::VpnError bad_http_response_to_connect_error(const HttpHeaders *response);
+
+HttpHeaders make_http_connect_request(
+        HttpVersion version, const TunnelAddress *dst_addr, std::string_view app_name, std::string_view creds);
+
+std::string make_credentials(std::string_view username, std::string_view password);
+
+using SslPtr = ag::DeclPtr<SSL, SSL_free>;
+
+std::variant<SslPtr, std::string> make_ssl(
+        int (*verification_callback)(X509_STORE_CTX *, void *), void *arg, ag::U8View alpn_protos, const char *sni);
+
+} // namespace ag
+
+inline bool operator==(const sockaddr_storage &lh, const sockaddr_storage &rh) {
+    return ag::sockaddr_equals((sockaddr *) &lh, (sockaddr *) &rh);
+}
+
+inline bool operator!=(const sockaddr_storage &lh, const sockaddr_storage &rh) {
+    return !(lh == rh);
+}
+
+namespace std {
+
+template <>
+struct hash<sockaddr_storage> {
+    size_t operator()(const sockaddr_storage &k) const {
+        return ag::sockaddr_hash((sockaddr *) &k);
+    }
+};
+
+template <>
+struct hash<ag::TunnelAddress> {
+    size_t operator()(const ag::TunnelAddress &addr) const {
+        size_t hash = 0;
+        if (const sockaddr_storage *a = std::get_if<sockaddr_storage>(&addr); a != nullptr) {
+            hash = ag::sockaddr_hash((sockaddr *) a);
+        } else if (const ag::NamePort *np = std::get_if<ag::NamePort>(&addr); np != nullptr) {
+            hash = ag::hash_pair_combine(ag::str_hash32(np->name.c_str(), np->name.length()), np->port);
+        }
+        return hash;
+    }
+};
+
+template <>
+struct hash<ag::TunnelAddressPair> {
+    size_t operator()(const ag::TunnelAddressPair &addr) const {
+        return ag::hash_pair_combine(ag::sockaddr_hash((sockaddr *) &addr.src), hash<ag::TunnelAddress>{}(addr.dst));
+    }
+};
+
+template <>
+struct hash<ag::SockAddrTag> {
+    size_t operator()(const ag::SockAddrTag &k) const {
+        return ag::hash_pair_combine(ag::sockaddr_hash((sockaddr *) &k.addr), std::hash<std::string>()(k.appname));
+    }
+};
+
+} // namespace std

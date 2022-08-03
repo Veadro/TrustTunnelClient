@@ -2,8 +2,8 @@
 version: 2
 plan:
   project-key: CL
-  key: VOIT
-  name: VpnLibs - Run tests
+  key: VLIT
+  name: VpnLibs - Run Integration Test
 stages:
   - Default Stage:
       manual: false
@@ -22,12 +22,12 @@ Run integration test:
   tasks:
     - !include docker-clean.yaml
     - checkout:
-        repository: vpn-libs
+        repository: core-libs/vpn-libs
         path: vpn-libs
         force-clean-build: 'true'
         description: Checkout client
     - checkout:
-        repository: vpn-libs-endpoint
+        repository: core-libs/vpn-libs-endpoint
         path: vpn-libs-endpoint
         force-clean-build: 'true'
         description: Checkout server
@@ -170,7 +170,9 @@ Run integration test:
     - adg-privileged-docker
   artifact-subscriptions: [ ]
 repositories:
-  - vpn-libs:
+  - core-libs/vpn-libs:
+      scope: global
+  - core-libs/vpn-libs-endpoint:
       scope: global
 branches:
   create: for-pull-request

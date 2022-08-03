@@ -1,0 +1,601 @@
+#include "net/tls.h"
+
+#ifndef _WIN32
+#include <netinet/in.h>
+#else
+#include <winsock2.h>
+#endif
+
+#if defined __APPLE__ && defined __MACH__
+#include <CoreFoundation/CoreFoundation.h>
+#include <Security/Security.h>
+#include <TargetConditionals.h>
+#endif
+
+#include <cassert>
+#include <cstring>
+
+#include <FF/number.h>
+#include <openssl/x509v3.h>
+
+namespace ag {
+
+#if defined __APPLE__ && defined __MACH__ && TARGET_OS_IPHONE
+
+X509_STORE *tls_create_ca_store() {
+    assert(0);
+    return nullptr;
+}
+
+#elif defined __APPLE__ && defined __MACH__
+
+X509_STORE *tls_create_ca_store() {
+    X509_STORE *store = X509_STORE_new();
+    if (store == nullptr) {
+        return nullptr;
+    }
+
+    CFArrayRef anchors;
+    OSStatus r = SecTrustCopyAnchorCertificates(&anchors);
+    if (r != errSecSuccess) {
+        return nullptr;
+    }
+
+    for (CFIndex i = 0; i < CFArrayGetCount(anchors); i++) {
+        SecCertificateRef current_cert = (SecCertificateRef) CFArrayGetValueAtIndex(anchors, i);
+        if (current_cert == nullptr) {
+            continue;
+        }
+
+        CFDataRef cert_data = SecCertificateCopyData(current_cert);
+        if (cert_data == nullptr) {
+            continue;
+        }
+
+        X509 *xcert = nullptr;
+        const uint8_t *ptr = CFDataGetBytePtr(cert_data);
+        d2i_X509(&xcert, &ptr, CFDataGetLength(cert_data));
+        if (xcert != nullptr) {
+            X509_STORE_add_cert(store, xcert);
+            X509_free(xcert);
+        }
+
+        CFRelease(cert_data);
+    }
+
+    CFRelease(anchors);
+
+    return store;
+}
+
+#else
+
+X509_STORE *tls_create_ca_store() {
+    X509_STORE *store = X509_STORE_new();
+    X509_STORE_set_default_paths(store);
+    return store;
+}
+
+#endif // defined __APPLE__ && defined __MACH__ && TARGET_OS_IPHONE
+
+X509 *tls_get_cert(X509_STORE_CTX *ctx) {
+    X509 *cert = X509_STORE_CTX_get0_cert(ctx);
+    return cert;
+}
+
+STACK_OF(X509) * tls_get_chain(X509_STORE_CTX *ctx) {
+    STACK_OF(X509) *chain = X509_STORE_CTX_get0_untrusted(ctx);
+    return chain;
+}
+
+TlsCert tls_serialize_cert(X509 *cert) {
+    TlsCert out{};
+    int size = i2d_X509(cert, nullptr);
+    if (size > 0) {
+        out.size = size;
+        out.data = new uint8_t[size];
+        auto *o = (unsigned char *) out.data;
+        i2d_X509(cert, &o);
+    }
+    return out;
+}
+
+void tls_free_serialized_cert(TlsCert *cert) {
+    if (cert) {
+        delete[] cert->data;
+    }
+}
+
+TlsChain tls_serialize_cert_chain(STACK_OF(X509) * chain) {
+    TlsChain out{};
+    out.size = sk_X509_num(chain);
+    out.data = new TlsCert[out.size];
+
+    for (size_t i = 0; i < out.size; ++i) {
+        X509 *x = sk_X509_value(chain, i);
+        out.data[i] = tls_serialize_cert(x);
+    }
+
+    return out;
+}
+
+void tls_free_serialized_chain(TlsChain *chain) {
+    if (chain) {
+        delete[] chain->data;
+    }
+}
+
+bool tls_verify_cert_host_name(X509 *cert, const char *host) {
+    uint32_t flags = X509_CHECK_FLAG_ALWAYS_CHECK_SUBJECT;
+    return 1 == X509_check_host(cert, host, strlen(host), flags, nullptr);
+}
+
+bool tls_verify_cert_ip(X509 *cert, const char *ip) {
+    return 1 == X509_check_ip_asc(cert, ip, X509_CHECK_FLAG_ALWAYS_CHECK_SUBJECT);
+}
+
+const char *tls_verify_cert(X509_STORE_CTX *ctx_template, X509_STORE *orig_store) {
+    const char *err = nullptr;
+
+    X509_STORE *store = orig_store;
+    if (store == nullptr) {
+        store = tls_create_ca_store();
+    }
+    X509_STORE_CTX *ctx = X509_STORE_CTX_new();
+
+    if (0
+            == X509_STORE_CTX_init(
+                    ctx, store, X509_STORE_CTX_get0_cert(ctx_template), X509_STORE_CTX_get0_untrusted(ctx_template))) {
+        err = "Can't verify certificate chain: can't initialize STORE_CTX";
+        goto finish;
+    }
+    if (0 == X509_STORE_CTX_set_purpose(ctx, X509_PURPOSE_SSL_SERVER)) {
+        err = "Can't verify certificate chain: can't set STORE_CTX purpose";
+        goto finish;
+    }
+    if (0 >= X509_verify_cert(ctx)) {
+        err = X509_verify_cert_error_string(X509_STORE_CTX_get_error(ctx));
+        goto finish;
+    }
+
+finish:
+    X509_STORE_CTX_free(ctx);
+    if (orig_store == nullptr) {
+        X509_STORE_free(store);
+    }
+    return err;
+}
+
+typedef enum {
+    CT_HANDSHAKE = 22,
+} RecType;
+
+typedef enum {
+    HS_CLIENT_HELLO = 1,
+    HS_SERVER_HELLO = 2,
+    HS_CERTIFICATE = 11,
+    HS_SERVER_KEY_EXCHANGE = 12,
+    HS_CERTIFICATE_REQUEST = 13,
+    HS_SERVER_HELLO_DONE = 14,
+} HshakeType;
+
+typedef enum {
+    SNI_HOST_NAME = 0, // uint8_t hostname[]
+} NameType;
+
+#pragma pack(push, 1)
+
+typedef struct {
+    uint8_t type; // enum rec_type_t
+    uint16_t ver; // 3,1 - TLSv1.0
+    uint16_t len;
+    uint8_t data[0];
+} Rec;
+
+typedef struct {
+    uint8_t type; // enum hshake_type_t
+    uint8_t len[3];
+    uint8_t data[0];
+} Hshake;
+
+typedef struct {
+    uint8_t len; // 0..32
+    uint8_t data[0];
+} SessId;
+
+typedef struct {
+    uint16_t ver;
+    uint8_t random[32];
+    SessId session_id;
+    // cipher_suites; 2-byte length + data
+    // compression_methods; 2-byte length + data
+    // exts; 2-byte length + data
+} ClientHello;
+
+typedef enum {
+    EXT_SERVER_NAME = 0,
+} ExtensionType;
+
+typedef struct {
+    uint16_t type; // enum extension_type_t
+    uint16_t len;
+    uint8_t data[0];
+} Ext;
+
+typedef struct {
+    uint8_t type; // enum name_type_t
+    uint16_t len;
+    uint8_t data[0];
+} ServName;
+
+#pragma pack(pop)
+
+static int datalen8(const uint8_t *d, const uint8_t *end) {
+    if (1 > end - d) {
+        return -1;
+    }
+
+    int n = d[0];
+    if (d + 1 + n > end) {
+        return -1;
+    }
+
+    return n;
+}
+
+static int datalen16(const uint8_t *d, const uint8_t *end) {
+    if (2 > end - d) {
+        return -1;
+    }
+
+    int n = ntohs(*(uint16_t *) d);
+    if (d + 2 + n > end) {
+        return -1;
+    }
+
+    return n;
+}
+
+static int datalen24(const uint8_t *d, const uint8_t *end) {
+    if (3 > end - d) {
+        return -1;
+    }
+
+    int n = ffint_ntoh24(d);
+    if (d + 3 + n > end) {
+        return -1;
+    }
+
+    return n;
+}
+
+/**
+Return enum rec_type_t;  <=0 on error. */
+static int rec_parse(TlsReader *reader, U8View data) {
+    const auto *rec = (Rec *) data.data();
+    if (data.size() >= 2 && rec->type != CT_HANDSHAKE) {
+        return -1;
+    }
+
+    if (sizeof(Rec) > data.size()) {
+        return 0;
+    }
+
+    int n = ntohs(rec->len);
+    if (sizeof(Rec) + n > data.size()) {
+        return 0;
+    }
+
+    int ver = ntohs(rec->ver);
+    if (ver < 0x0301) {
+        return -1;
+    }
+
+    reader->rec = {rec->data, size_t(n)};
+    reader->in.remove_prefix(sizeof(Rec) + reader->rec.size());
+    return rec->type;
+}
+
+/**
+Return enum hshake_type_t;  <=0 on error. */
+static int hshake_parse(TlsReader *reader, U8View data) {
+    if (sizeof(Hshake) > data.size()) {
+        return 0;
+    }
+
+    const auto *h = (Hshake *) data.data();
+    uint32_t n = ffint_ntoh24(h->len);
+    if (n > data.size() - 1) {
+        return 0;
+    }
+
+    reader->rec.remove_prefix(sizeof(Hshake) + n);
+    reader->buf = {h->data, size_t(n)};
+    return h->type;
+}
+
+/**
+Return 1 on success;  <=0 on error. */
+static int hello_parse(TlsReader *reader, U8View data) {
+    if (sizeof(ClientHello) > data.size()) {
+        return 0;
+    }
+
+    const auto *c = (ClientHello *) data.data();
+
+    const uint8_t *end = data.data() + data.size();
+    if (c->session_id.len > end - c->session_id.data) {
+        return 0;
+    }
+
+    const uint8_t *d = c->session_id.data + c->session_id.len;
+
+    // cipher_suite[]
+    int size = datalen16(d, end);
+    if (size < 0) {
+        return 0;
+    }
+
+    d += 2 + size;
+
+    // comp_meth[]
+    size = datalen8(d, end);
+    if (size < 0) {
+        return 0;
+    }
+
+    d += 1 + size;
+
+    reader->buf = {d, size_t(end - d)};
+    return 1;
+}
+
+/**
+Return TLS_RCLIENT_HELLO_SNI or TLS_RDONE;  0 on error. */
+static int ext_servname_parse(TlsReader *reader, const uint8_t *data, size_t len) {
+    const uint8_t *end = data + len;
+    int size = datalen16(data, end);
+    if (size < 0) {
+        return 0;
+    }
+
+    const uint8_t *d = data + 2;
+    end = d + size;
+
+    for (;;) {
+        const auto *sn = (ServName *) d;
+        if ((int) sizeof(ServName) > end - d) {
+            break;
+        }
+
+        int n = ntohs(sn->len);
+        if (sn->data + n > end) {
+            return 0;
+        }
+
+        if (sn->type == SNI_HOST_NAME) {
+            reader->tls_hostname = {(char *) sn->data, size_t(n)};
+            return TLS_RCLIENT_HELLO_SNI;
+        }
+
+        d = sn->data + n;
+    }
+
+    return TLS_RDONE;
+}
+
+/** Parse TLS extension.
+Return TLS_RCLIENT_HELLO_SNI or TLS_RDONE on success;  <=0 on error. */
+static int ext_parse(TlsReader *reader, U8View &data) {
+    const uint8_t *end = data.data() + data.size();
+    if ((int) sizeof(Ext) > end - data.data()) {
+        return TLS_RERR;
+    }
+
+    const auto *ext = (Ext *) data.data();
+    uint16_t n = ntohs(ext->len);
+    if (ext->data + n > end) {
+        return TLS_RERR;
+    }
+
+    int r = TLS_RDONE;
+    auto type = (ExtensionType) ntohs(ext->type);
+    switch (type) {
+    case EXT_SERVER_NAME:
+        r = ext_servname_parse(reader, ext->data, n);
+        break;
+    }
+
+    data = {ext->data + n, size_t(end - ext->data - n)};
+    return r;
+}
+
+/** Get data for TLS extensions.
+Return TLS_RDONE on success;  0 on error. */
+static int exts_data(TlsReader *reader, U8View data) {
+    const uint8_t *end = data.data() + data.size();
+
+    int size = datalen16(data.data(), end);
+    if (size < 0) {
+        return 0;
+    }
+
+    data.remove_prefix(2);
+    reader->buf = data;
+
+    return TLS_RDONE;
+}
+
+/** Get X509 object from raw data. */
+static X509 *ossl_cert_decode(const uint8_t *data, size_t len) {
+    BIO *b = BIO_new(BIO_s_mem());
+    if (b == nullptr) {
+        return nullptr;
+    }
+
+    BIO_write(b, data, len);
+    X509 *x = d2i_X509_bio(b, nullptr);
+    BIO_free(b);
+    return x;
+}
+
+/** Set subject.CN data. */
+static int ossl_cert_subj_CN(TlsReader *reader, X509 *x) {
+    X509_NAME *subj = X509_get_subject_name(x);
+    if (subj == nullptr) {
+        return -1;
+    }
+
+    reader->x509_subject_common_name.resize(1024);
+    int n = X509_NAME_get_text_by_NID(subj, NID_commonName, reader->x509_subject_common_name.data(),
+            int(reader->x509_subject_common_name.size()));
+    if (n < 0) {
+        reader->x509_subject_common_name.resize(0);
+        return -1;
+    }
+
+    reader->x509_subject_common_name.resize(n);
+    return 0;
+}
+
+/** Parse certificates.
+Note: returns early after the first certificate.
+Return TLS_RCERT or TLS_RDONE on success;  <=0 on error. */
+static int certs_parse(TlsReader *reader, U8View data) {
+    const uint8_t *end = data.data() + data.size();
+    int size = datalen24(data.data(), end);
+    if (size < 0) {
+        return 0;
+    }
+
+    const uint8_t *d = data.data() + 3;
+    end = d + size;
+
+    size = datalen24(d, end);
+    if (size < 0) {
+        return 0;
+    }
+
+    d += 3;
+
+    X509 *x = ossl_cert_decode(d, size);
+    if (x == nullptr) {
+        return -1;
+    }
+
+    int r = ossl_cert_subj_CN(reader, x);
+    X509_free(x);
+    if (r != 0) {
+        return -1;
+    }
+
+    return TLS_RCERT;
+}
+
+TlsParseResult tls_parse(TlsReader *reader) {
+    enum {
+        I_REC,
+        I_HSHAKE,
+        I_CLIHEL,
+        I_CLIHEL_EXTS,
+        I_CLIHEL_EXT,
+        I_CERTS,
+    };
+    int r;
+
+    for (;;) {
+        switch (reader->state) {
+
+        case I_REC:
+            r = rec_parse(reader, reader->in);
+            if (r == 0) {
+                return TLS_RMORE;
+            } else if (r < 0) {
+                return TLS_RERR;
+            }
+
+            switch (r) {
+            case CT_HANDSHAKE:
+                reader->state = I_HSHAKE;
+                continue;
+            default:
+                return TLS_RERR; // not supported
+            }
+            break;
+
+        case I_HSHAKE:
+            if (reader->rec.empty()) {
+                reader->state = I_REC;
+                return TLS_RDONE;
+            }
+            r = hshake_parse(reader, reader->rec);
+            if (r <= 0) {
+                return TLS_RERR;
+            }
+
+            switch (r) {
+            case HS_CLIENT_HELLO:
+                reader->state = I_CLIHEL;
+                continue;
+            case HS_SERVER_HELLO:
+                reader->state = I_HSHAKE;
+                return TLS_RSERV_HELLO;
+            case HS_CERTIFICATE:
+                reader->state = I_CERTS;
+                continue;
+            case HS_SERVER_KEY_EXCHANGE:
+            case HS_CERTIFICATE_REQUEST:
+            case HS_SERVER_HELLO_DONE:
+                reader->state = I_HSHAKE;
+                return TLS_RDONE;
+            default:
+                return TLS_RERR; // not supported
+            }
+            break;
+
+        case I_CLIHEL:
+            r = hello_parse(reader, reader->buf);
+            if (r <= 0) {
+                return TLS_RERR;
+            }
+
+            reader->state = I_CLIHEL_EXTS;
+            return TLS_RCLIENT_HELLO;
+
+        case I_CLIHEL_EXTS:
+            r = exts_data(reader, reader->buf);
+            if (r <= 0) {
+                return TLS_RERR;
+            }
+
+            reader->state = I_CLIHEL_EXT;
+            break;
+
+        case I_CLIHEL_EXT:
+            if (reader->buf.empty()) {
+                reader->state = I_HSHAKE;
+                continue;
+            }
+
+            r = ext_parse(reader, reader->buf);
+            if (r <= 0) {
+                return TLS_RERR;
+            } else if (r != TLS_RDONE) {
+                return (TlsParseResult) r;
+            }
+
+            break;
+
+        case I_CERTS:
+            r = certs_parse(reader, reader->buf);
+            if (r <= 0) {
+                return TLS_RERR;
+            }
+
+            reader->state = I_HSHAKE;
+            return TLS_RCERT;
+        }
+    }
+}
+
+} // namespace ag

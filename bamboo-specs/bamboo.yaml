@@ -4,3 +4,5 @@
   !include 'run-tests.yaml'
 ---
   !include 'run-integration-test.yaml'
+---
+  !include 'upload-conan-recipes.yaml'

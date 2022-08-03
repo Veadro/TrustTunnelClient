@@ -1,0 +1,88 @@
+from conans import ConanFile, CMake
+
+
+class VpnLibsConan(ConanFile):
+    name = "vpn-libs"
+    license = "GPL-3.0-or-later"
+    author = "AdguardTeam"
+    url = "https://github.com/AdguardTeam/VpnLibs"
+    description = "A VPN client library that provides client network traffic tunnelling to an AdGuard VPN server"
+    settings = "os", "compiler", "build_type", "arch"
+    options = {
+        "commit_hash": "ANY",
+        "sanitize": "ANY"
+    }
+    default_options = {
+        "commit_hash": None,  # None means `master`
+        "sanitize": None,  # None means none
+    }
+    generators = "cmake"
+
+    def requirements(self):
+        for req in self.conan_data["requirements"]:
+            self.requires(req)
+
+    def build_requirements(self):
+        self.build_requires("gtest/1.11.0")
+        self.build_requires("cxxopts/3.0.0")
+        self.build_requires("nlohmann_json/3.10.5")
+
+    def configure(self):
+        self.options["gtest"].build_gmock = False
+        self.options["dns-libs"].commit_hash = "1ce2d08acaadaf9cc730f04fc62ddd07bea8e159"
+
+        # Resolve conflict between pcre2 required from dns-libs and pcre2 required form native_libs_common
+        self.options["pcre2"].build_pcre2grep = False
+
+        # Commit hash should only be used with native_libs_common/777
+        # self.options["native_libs_common"].commit_hash = "72731a36771d550ffae8c1223e0a129fefc2384c"
+
+    def source(self):
+        self.run("git clone https://github.com/AdguardTeam/VpnLibs.git source_subfolder")
+
+        if self.options.commit_hash:
+            self.run("cd source_subfolder && git checkout %s" % self.options.commit_hash)
+
+    def build(self):
+        cmake = CMake(self)
+        cmake.definitions["CMAKE_C_FLAGS"] = ""
+        cmake.definitions["CMAKE_CXX_FLAGS"] = ""
+        # A better way to pass these was not found :(
+        if self.settings.os == "Linux":
+            if self.settings.compiler.libcxx:
+                cmake.definitions["CMAKE_CXX_FLAGS"] = "-stdlib=%s" % self.settings.compiler.libcxx
+            if self.settings.compiler.version:
+                cmake.definitions["CMAKE_CXX_COMPILER_VERSION"] = self.settings.compiler.version
+        if self.options.sanitize:
+            cmake.definitions["CMAKE_C_FLAGS"] += f" -fno-omit-frame-pointer -fsanitize={self.options.sanitize}"
+            cmake.definitions["CMAKE_CXX_FLAGS"] += f" -fno-omit-frame-pointer -fsanitize={self.options.sanitize}"
+        cmake.configure(source_folder="source_subfolder")
+        cmake.build(target="vpnlibs_common")
+        cmake.build(target="vpnlibs_core")
+        cmake.build(target="vpnlibs_net")
+        cmake.build(target="vpnlibs_tcpip")
+
+    def package(self):
+        MODULES = [
+            "common",
+            "core",
+            "net",
+            "tcpip",
+        ]
+
+        for m in MODULES:
+            self.copy("*.h", dst="include", src="source_subfolder/%s/include" % m)
+
+        self.copy("*.lib", dst="lib", keep_path=False)
+        self.copy("*.dll", dst="bin", keep_path=False)
+        self.copy("*.so", dst="lib", keep_path=False)
+        self.copy("*.dylib", dst="lib", keep_path=False)
+        self.copy("*.a", dst="lib", keep_path=False)
+
+    def package_info(self):
+        self.cpp_info.libs = [
+            "vpnlibs_core",
+            "vpnlibs_net",
+            "vpnlibs_tcpip",
+            "vpnlibs_common",
+        ]

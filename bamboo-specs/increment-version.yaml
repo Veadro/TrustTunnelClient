@@ -3,7 +3,7 @@ version: 2
 plan:
   project-key: CL
   key: VLIV
-  name: VpnLibs - Increment version
+  name: VpnLibs - Increment Version
 stages:
   - Default Stage:
       manual: false
@@ -23,7 +23,7 @@ Increment version:
   tasks:
     - !include docker-clean.yaml
     - checkout:
-        repository: vpn-libs
+        repository: core-libs/vpn-libs
         path: vpn-libs
         force-clean-build: 'true'
         description: Checkout
@@ -44,7 +44,8 @@ Increment version:
             git remote set-url origin ${bamboo_planRepository_repositoryUrl}
             git pull
             git reset
-            git add common/include/version.h
+            git add common/include/vpn/version.h
+            git add CHANGELOG.md
             git commit -m "skipci: Automatic version increment by Bamboo"
             git push
         working-dir: vpn-libs
@@ -55,7 +56,7 @@ Increment version:
 variables:
   custom.version: 'none'
 repositories:
-  - vpn-libs:
+  - core-libs/vpn-libs:
       scope: global
 branches:
   create: manually

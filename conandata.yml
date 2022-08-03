@@ -1,0 +1,16 @@
+requirements:
+  - "magic_enum/0.7.3"
+  - "http_parser/2.9.4"
+  - "brotli/1.0.9"
+  - "zlib/1.2.11"
+  - "libevent/2.1.11@AdguardTeam/NativeLibsCommon"
+  - "ldns/2021-03-29@AdguardTeam/NativeLibsCommon"
+  - "klib/2021-04-06@AdguardTeam/NativeLibsCommon"
+  - "openssl/boring-2021-05-11@AdguardTeam/NativeLibsCommon"
+  - "quiche/0.10.0@AdguardTeam/NativeLibsCommon"
+  - "nghttp2/1.44.0@AdguardTeam/NativeLibsCommon"
+  - "dns-libs/777@AdguardTeam/NativeLibsCommon"
+  - "native_libs_common/2.0.10@AdguardTeam/NativeLibsCommon"
+commit_hash:
+  "0.90.5":
+    hash: "8349aca40ecd6df1e8b66c508e8f6e78f3769fb6"

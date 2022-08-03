@@ -1,4 +1,4 @@
-#!/bin/bash -x
+#!/bin/bash
 
 increment_version() {
   major=${1%%.*}
@@ -7,15 +7,24 @@ increment_version() {
   echo ${major}.${minor}.$((revision+1))
 }
 
-version_name=$(cat common/include/vpn/version.h | grep "define" | sed -e "s/^.*VERSION \"//g" | sed -e "s/\"$//g")
-echo "Version before increment is ${version_name}"
-new_version_name=${1:-$(increment_version ${version_name})}
-echo "New version name is ${new_version_name}"
+argument_version=$1
+if [ -z "$argument_version" ]
+then
+  VERSION=$(cat ../conandata.yml | grep "[0-9]*\.[0-9]*." | tail -1 | sed "s/\"//" | sed "s/\"\://")
+  echo "Last version was ${VERSION}"
+  NEW_VERSION=$(increment_version ${VERSION})
+  echo "New version is ${NEW_VERSION}"
+else
+  if [[ "$argument_version" =~ ^[0-9]\.[0-9].[0-9]*$ ]]
+  then
+    NEW_VERSION=$1
+    echo "New version is ${NEW_VERSION}"
+  else
+    echo "INVALID VERSION FORMAT"
+  fi
+fi
 
-version_name=$(echo ${version_name} | sed -e 's/\./\\\./g')
+COMMIT_HASH=$(git rev-parse master)
+echo "Last commit hash is ${COMMIT_HASH}"
 
-old_part="VERSION \"${version_name}"
-new_part="VERSION \"${new_version_name}"
-sed -i -e "s/${old_part}/${new_part}/" common/include/vpn/version.h
-
-sed -i -e '3{s/##/##/;t;s/^/## '${new_version_name}'\n\n/}' CHANGELOG.md
+[[ ! -z "$NEW_VERSION" ]] && (printf "  \"${NEW_VERSION}\":\n    hash: \"${COMMIT_HASH}\"\n" | tee -a conandata.yml)

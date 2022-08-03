@@ -1,0 +1,14 @@
+cmake-build-release/
+cmake-build-debug/
+.vscode/
+.idea/
+build/
+
+# OS X
+.DS_Store
+
+# Debug files
+*.dSYM
+
+# Rust
+Cargo.lock

@@ -1,0 +1,216 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "vpn/platform.h" // Unbreak Windows build
+
+#include <event2/event.h>
+#include <event2/util.h>
+#include <fmt/format.h>
+#include <openssl/x509.h>
+
+#include "net/http_header.h"
+#include "vpn/utils.h"
+
+namespace ag {
+
+struct SocketProtectEvent {
+    evutil_socket_t fd; // file descriptor
+    int family;         // address family
+    int result;         // FILLED BY HANDLER: operation result (0 in case of success)
+};
+
+struct CertVerifyHandler {
+    // server certificate verify callback
+    int (*func)(const char *host_name, const sockaddr *host_ip, X509_STORE_CTX *ctx, void *arg);
+    void *arg; // will be set to SSL object as app data (like `SSL_set_app_data(ssl, cert_verify_arg)`)
+};
+
+struct VpnEndpoint {
+    sockaddr_storage address; // endpoint address
+    const char *name;         // endpoint host name (used, for example, for TLS handshake)
+};
+
+using VpnEndpoints = AG_ARRAY_OF(VpnEndpoint);
+
+struct VpnLocation {
+    const char *id;         // location id
+    VpnEndpoints endpoints; // location endpoints
+};
+
+struct NameValue {
+    std::vector<uint8_t> name;
+    std::vector<uint8_t> value;
+};
+
+enum IcmpMessageType {
+    ICMP_MT_ECHO_REPLY = 0,              // Echo Reply Message
+    ICMP_MT_DESTINATION_UNREACHABLE = 3, // Destination Unreachable Message
+    ICMP_MT_ECHO = 8,                    // Echo Message
+    ICMP_MT_TIME_EXCEEDED = 11,          // Time Exceeded Message
+};
+
+enum IcmpDestUnreachCode {
+    ICMP_DUC_NET_UNREACH,  // net unreachable
+    ICMP_DUC_HOST_UNREACH, // host unreachable
+};
+
+enum IcmpTimeExceededCode {
+    ICMP_TEC_TTL, // time to live exceeded in transit
+};
+
+enum Icmpv6MessageType {
+    ICMPV6_MT_DESTINATION_UNREACHABLE = 1, // Destination Unreachable Message
+    ICMPV6_MT_TIME_EXCEEDED = 3,           // Time Exceeded Message
+    ICMPV6_MT_ECHO_REQUEST = 128,          // Echo Request Message
+    ICMPV6_MT_ECHO_REPLY = 129,            // Echo Reply Message
+};
+
+enum Icmpv6DestUnreachCode {
+    ICMPV6_DUC_NO_ROUTE = 0,        // No route to destination
+    ICMPV6_DUC_ADDRESS_UNREACH = 3, // Address unreachable
+};
+
+enum Icmpv6TimeExceededCode {
+    ICMPV6_TEC_HOP, // Hop limit exceeded in transit
+};
+
+struct IcmpEchoRequest {
+    sockaddr_storage peer; /**< destination address of connection */
+    uint16_t id;           /**< an identifier to aid in matching echos and replies */
+    uint16_t seqno;        /**< a sequence number to aid in matching echos and replies */
+    uint8_t ttl;           /**< a carrying IP packet TTL */
+    uint16_t data_size;    /**< the size of data of the echo message */
+};
+
+struct IcmpEchoReply {
+    /** source address of the reply (essentially equals to `dst` in corresponding `tcpip_icmp_echo_t`) */
+    sockaddr_storage peer;
+    uint16_t id;    /**< an identifier to aid in matching echos and replies */
+    uint16_t seqno; /**< a sequence number to aid in matching echos and replies */
+    uint8_t type;   /**< a type of the reply message */
+    uint8_t code;   /**< a code of the reply message */
+};
+
+struct IcmpEchoRequestEvent {
+    IcmpEchoRequest request;
+    int result; /**< operation result - filled by caller: 0 if successful, non-zero otherwise */
+};
+
+/**
+ * Special message type used as a marker for dropping a pending request.
+ * The value must not match any of the standard codes from
+ * https://www.iana.org/assignments/icmp-parameters/icmp-parameters.xhtml.
+ */
+static const uint8_t ICMP_MT_DROP = 84;
+static const size_t UDP_MAX_DATAGRAM_SIZE = 65535;
+static const int DEFAULT_PING_TIMEOUT_MS = 10 * 1000;
+static const int DEFAULT_PING_ROUNDS = 3;
+
+static constexpr std::string_view HTTP_METHOD_CONNECT = "CONNECT";
+static constexpr std::string_view HTTP_METHOD_GET = "GET";
+
+/**
+ * Serializes HTTP headers structure to valid HTTP/1.1 message (request or response)
+ * @param headers Pointer to HTTP headers structure
+ * @return Non-null-terminated byte array containing HTTP/1.1 message
+ */
+std::string http_headers_to_http1_message(const HttpHeaders *headers, bool one_line);
+
+/**
+ * Converts HTTP headers structure to a list of name-value pairs representing the given headers
+ * including pseudo-headers.
+ * @param headers Pointer to HTTP headers structure
+ * @return A list of name-value pairs (must be ffarr_free'd by caller)
+ */
+std::vector<NameValue> http_headers_to_nv_list(const HttpHeaders *headers);
+
+/**
+ * Check if given packet is QUIC
+ * @param dst_port destination port
+ * @param data packet payload
+ * @param length payload size
+ * @return true if QUIC, false otherwise
+ */
+bool packet_is_quic(uint32_t dst_port, const uint8_t *data, size_t length);
+
+/**
+ * Make a deep copy of an endpoint
+ */
+void vpn_endpoint_clone(VpnEndpoint *dst, const VpnEndpoint *src);
+
+/**
+ * Destroy endpoint's inner resources
+ */
+void vpn_endpoint_destroy(VpnEndpoint *endpoint);
+
+/**
+ * Check if 2 endpoints are equal
+ */
+bool vpn_endpoint_equals(const VpnEndpoint *lh, const VpnEndpoint *rh);
+
+/**
+ * Make a deep copy of a location
+ */
+void vpn_location_clone(VpnLocation *dst, const VpnLocation *src);
+
+/**
+ * Destroy location's inner resources
+ */
+void vpn_location_destroy(VpnLocation *location);
+
+#ifndef _WIN32
+/**
+ * Set default outgoing interface for pings. 0 is "not set".
+ * @param bound_if
+ */
+void ping_set_bound_if(uint32_t bound_if);
+#endif
+
+/**
+ * Return the length of varint-encoded value
+ */
+static inline size_t varint_len(uint64_t varint_value) {
+    if (varint_value <= 63) {
+        return 1;
+    } else if (varint_value <= 16383) {
+        return 2;
+    } else if (varint_value <= 1073741823) {
+        return 4;
+    }
+    return 8;
+}
+
+} // namespace ag
+
+template <>
+struct fmt::formatter<ag::IcmpEchoRequest> {
+    template <typename ParseContext>
+    constexpr auto parse(ParseContext &ctx) {
+        return ctx.begin();
+    }
+
+    template <typename FormatContext>
+    auto format(const ag::IcmpEchoRequest &request, FormatContext &ctx) {
+        return fmt::format_to(ctx.out(), "peer={}, id={}, seqno={}, ttl={}, data_size={}",
+                ag::sockaddr_ip_to_str((sockaddr *) &request.peer), request.id, request.seqno, request.ttl,
+                request.data_size);
+    }
+};
+
+template <>
+struct fmt::formatter<ag::IcmpEchoReply> {
+    template <typename ParseContext>
+    constexpr auto parse(ParseContext &ctx) {
+        return ctx.begin();
+    }
+
+    template <typename FormatContext>
+    auto format(const ag::IcmpEchoReply &reply, FormatContext &ctx) {
+        return fmt::format_to(ctx.out(), "peer={}, id={}, seqno={}, type={}, code={}",
+                ag::sockaddr_ip_to_str((sockaddr *) &reply.peer), reply.id, reply.seqno, reply.type, reply.code);
+    }
+};
