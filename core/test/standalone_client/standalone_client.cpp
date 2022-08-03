@@ -420,6 +420,7 @@ return -1;
         case LT_TUN:
             setup_routes(g_tun_info);
             listener = vpn_create_tun_listener(g_vpn, &g_vpn_tun_listener_config);
+            break;
         case LT_SOCKS:
             listener = vpn_create_socks_listener(g_vpn, &g_vpn_socks_listener_config);
             break;
