@@ -1,5 +1,7 @@
 # CHANGELOG
 
+## 0.90.13
+
 * [Fix] Fix leaks and memory bugs in `tls_serialize_cert_chain`, `tls_free_serialized_chain`. Add tests.
 
 ## 0.90.12
