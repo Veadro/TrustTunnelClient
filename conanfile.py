@@ -40,8 +40,12 @@ class VpnLibsConan(ConanFile):
     def source(self):
         self.run("git clone https://github.com/AdguardTeam/VpnLibs.git source_subfolder")
 
-        if self.options.commit_hash:
-            self.run("cd source_subfolder && git checkout %s" % self.options.commit_hash)
+        if self.version == "777":
+            if self.options.commit_hash:
+                self.run("cd source_subfolder && git checkout -f %s" % self.options.commit_hash)
+        else:
+            version_hash = self.conan_data["commit_hash"][self.version]["hash"]
+            self.run("cd source_subfolder && git checkout -f %s" % version_hash)
 
     def build(self):
         cmake = CMake(self)
