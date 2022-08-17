@@ -44,6 +44,8 @@ set(SOURCE_FILES
         ${TCPIP_SOURCE_DIR}/icmp_request_manager.cpp
         ${TCPIP_SOURCE_DIR}/icmp_request.h
         ${TCPIP_SOURCE_DIR}/icmp_request.cpp
+        ${TCPIP_SOURCE_DIR}/vpn_packet_pool.cpp
+        ${TCPIP_SOURCE_DIR}/vpn_packet_pool.h
     )
 
 if(NOT TARGET vpnlibs_common)
@@ -83,4 +85,6 @@ set(TEST_EXTRA_INCLUDES ${LWIP_INCLUDE_DIRS} src)
 
 include_directories(${LWIP_INCLUDE_DIRS} src)
 
+
 add_unit_test(test_util "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" FALSE FALSE)
+add_unit_test(test_vpn_packet_pool "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" TRUE TRUE)

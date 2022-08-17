@@ -24,14 +24,15 @@
 #include "libevent_lwip.h"
 #include "tcp_conn_manager.h"
 #include "tcpip/tcpip.h"
+#include "tcpip_util.h"
 #include "udp_conn_manager.h"
-#include "util.h"
 #include "vpn/utils.h"
 
 namespace ag {
 
 #define TIMER_PERIOD_S (CONNECTION_TIMEOUT_S / 10)
 
+static constexpr int DEFAULT_PACKET_POOL_SIZE = 25;
 static const char *NETIF_NAME = "tn";
 static const TimerTickNotifyFn TIMER_TICK_NOTIFIERS[] = {
         tcp_cm_timer_tick,
@@ -41,7 +42,7 @@ static const TimerTickNotifyFn TIMER_TICK_NOTIFIERS[] = {
 static void dump_packet_to_pcap(TcpipCtx *ctx, const uint8_t *data, size_t len);
 static void dump_packet_iovec_to_pcap(TcpipCtx *ctx, evbuffer_iovec *iov, int iov_cnt);
 static void open_pcap_file(TcpipCtx *ctx, const char *pcap_filename);
-static void process_input_packet(TcpipCtx *ctx, const uint8_t *data, size_t len);
+static void process_input_packet(TcpipCtx *ctx, VpnPacket *packet);
 #ifdef __MACH__
 static err_t tun_output_to_utun_fd(TcpipCtx *ctx, const evbuffer_iovec *chunks, size_t chunks_num, int family);
 #endif /* __MACH__ */
@@ -150,11 +151,13 @@ static err_t netif_init_cb(struct netif *netif) {
 
 #ifdef __MACH__
 static void process_data_from_utun(TcpipCtx *ctx) {
+    VpnPacket packet = ctx->pool->get_packet();
+
     struct UtunHdr hdr;
 
     static constexpr int HDR_SIZE = sizeof(hdr);
     evbuffer_iovec iov[] = {{.iov_base = &hdr, .iov_len = HDR_SIZE},
-            {.iov_base = ctx->tun_input_buffer, .iov_len = ctx->parameters.mtu_size}};
+            {.iov_base = packet.data, .iov_len = ctx->parameters.mtu_size}};
     ssize_t bytes_read = readv(ctx->parameters.tun_fd, iov, std::size(iov));
     if (bytes_read <= 0) {
         if (EWOULDBLOCK != errno) {
@@ -168,45 +171,70 @@ static void process_data_from_utun(TcpipCtx *ctx) {
     }
 
     tracelog(ctx->logger, "data from UTUN: {} bytes", bytes_read);
-
-    process_input_packet(ctx, ctx->tun_input_buffer, bytes_read - HDR_SIZE);
+    packet.size = bytes_read - HDR_SIZE;
+    process_input_packet(ctx, &packet);
 }
 #else  /* __MACH__ */
 static void process_data_from_tun(TcpipCtx *ctx) {
-    ssize_t bytes_read = read(ctx->parameters.tun_fd, ctx->tun_input_buffer, ctx->parameters.mtu_size);
+    VpnPacket packet = ctx->pool->get_packet();
+
+    ssize_t bytes_read = read(ctx->parameters.tun_fd, packet.data, ctx->parameters.mtu_size);
     if (bytes_read <= 0) {
         if (EWOULDBLOCK != errno) {
             errlog(ctx->logger, "data from TUN: read failed (errno={})", strerror(errno));
         }
         return;
     }
-
+    packet.size = bytes_read;
     tracelog(ctx->logger, "data from TUN: {} bytes", bytes_read);
 
-    process_input_packet(ctx, ctx->tun_input_buffer, bytes_read);
+    process_input_packet(ctx, &packet);
 }
 #endif /* else of __MACH__ */
 
-static void process_input_packet(TcpipCtx *ctx, const uint8_t *data, size_t len) {
+struct CustomBuf{
+    pbuf_custom p{};
+    const uint8_t *data;
+    size_t size;
+    void (*destructor)(void *destructor_arg, uint8_t *data);
+    void *destructor_arg;
+    explicit CustomBuf(VpnPacket *packet) :
+            data(packet->data),
+            size(packet->size),
+            destructor(packet->destructor),
+            destructor_arg(packet->destructor_arg)
+    {}
+};
+
+static void custom_buf_free(struct pbuf *buf) {
+    auto *buf_custom = (CustomBuf *) buf;
+    if (buf_custom->destructor) {
+        buf_custom->destructor(buf_custom->destructor_arg, (uint8_t *) buf_custom->data);
+    }
+    delete buf_custom;
+}
+
+static void process_input_packet(TcpipCtx *ctx, VpnPacket *packet) {
     // Dump to PCap
     if (ctx->pcap_fd != -1) {
-        dump_packet_to_pcap(ctx, data, len);
+        dump_packet_to_pcap(ctx, packet->data, packet->size);
     }
 
-    struct pbuf *buffer = pbuf_alloc(PBUF_LINK, len, PBUF_RAM);
-    if (nullptr == buffer) {
-        errlog(ctx->logger, "data from TUN: failed to allocate buffer");
+    auto *buf_custom = new CustomBuf{packet};
+    buf_custom->p.custom_free_function = custom_buf_free;
+
+    pbuf *buffer = pbuf_alloced_custom(PBUF_RAW,
+            buf_custom->size,
+            PBUF_REF,
+            &buf_custom->p,
+            (void *) buf_custom->data,
+            buf_custom->size);
+    if (buffer == nullptr) {
+        delete buf_custom;
         return;
     }
+    err_t result = netif_input(buffer, ctx->netif);
 
-    err_t result = pbuf_take(buffer, data, len);
-    if (ERR_OK != result) {
-        errlog(ctx->logger, "data from TUN: pbuf_take failed");
-        pbuf_free(buffer);
-        return;
-    }
-
-    result = netif_input(buffer, ctx->netif);
     if (ERR_OK != result) {
         errlog(ctx->logger, "data from TUN: netif_input failed ({})", result);
     }
@@ -279,6 +307,8 @@ static bool configure_events(TcpipCtx *ctx) {
 }
 
 static void release_resources(TcpipCtx *ctx) {
+    delete ctx->pool;
+
     close(ctx->parameters.tun_fd);
     close(ctx->pcap_fd);
 
@@ -313,7 +343,9 @@ TcpipCtx *tcpip_init_internal(const TcpipParameters *params) {
 
     ctx->parameters = *params;
     ctx->parameters.mtu_size = (0 == ctx->parameters.mtu_size) ? DEFAULT_MTU_SIZE : ctx->parameters.mtu_size;
-
+    if (ctx->parameters.tun_fd != -1) {
+        ctx->pool = new VpnPacketPool(DEFAULT_PACKET_POOL_SIZE, ctx->parameters.mtu_size);
+    }
     if (!configure_events(ctx)) {
         errlog(ctx->logger, "init: failed to create events");
         goto error;
@@ -430,15 +462,15 @@ static void open_pcap_file(TcpipCtx *ctx, const char *pcap_filename) {
     infolog(ctx->logger, "started pcap capture");
 }
 
-void tcpip_process_input_packets(TcpipCtx *ctx, const evbuffer_iovec *packets, int count) {
-    tracelog(ctx->logger, "TUN: processing {} input packets", count);
+void tcpip_process_input_packets(TcpipCtx *ctx, VpnPackets *packets) {
+    tracelog(ctx->logger, "TUN: processing {} input packets", packets->size);
 
-    for (int i = 0; i < count; ++i) {
-        tracelog(ctx->logger, "TUN: packet length {}", packets[i].iov_len);
-        process_input_packet(ctx, (const uint8_t *) packets[i].iov_base, packets[i].iov_len);
+    for (size_t i = 0; i < packets->size; ++i) {
+        tracelog(ctx->logger, "TUN: packet length {}", packets->data[i].size);
+        process_input_packet(ctx, &packets->data[i]);
     }
 
-    tracelog(ctx->logger, "TUN: processed {} input packets", count);
+    tracelog(ctx->logger, "TUN: processed {} input packets", packets->size);
 }
 
 void notify_connection_statistics(TcpipConnection *connection) {

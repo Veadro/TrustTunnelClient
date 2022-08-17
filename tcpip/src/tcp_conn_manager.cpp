@@ -25,7 +25,7 @@
 #include "tcp_raw.h"
 #include "tcpip/tcpip.h"
 #include "tcpip_common.h"
-#include "util.h"
+#include "tcpip_util.h"
 
 namespace ag {
 
@@ -93,8 +93,10 @@ static void process_forwarded_connection(TcpConnDescriptor *connection) {
     connection->state = TCP_CONN_STATE_HAVE_RESULT;
     tcp_refresh_connection_timeout(connection);
 
-    const err_t r = netif_input(connection->buffer, ctx->netif);
-    if (ERR_OK != r) {
+    pbuf *buf = std::exchange(connection->buffer, nullptr);
+    const err_t r = netif_input(buf, ctx->netif);
+    if (r != ERR_OK) {
+        pbuf_free(buf);
         log_conn(connection, err, "netif_input failed: {} ({})", lwip_strerr(r), r);
         tcp_cm_close_descriptor(connection->common.parent_ctx, connection->common.id, false);
     }
@@ -113,8 +115,10 @@ static void process_rejected_connection(TcpConnDescriptor *connection) {
     connection->state = TCP_CONN_STATE_REJECTED;
 
     struct netif *netif = connection->common.parent_ctx->netif;
-    err_t r = netif_input(connection->buffer, netif);
-    if (ERR_OK != r) {
+    pbuf *buf = std::exchange(connection->buffer, nullptr);
+    const err_t r = netif_input(buf, netif);
+    if (r != ERR_OK) {
+        pbuf_free(buf);
         log_conn(connection, err, "netif_input failed: {} ({})", lwip_strerr(r), r);
     }
 
@@ -129,8 +133,10 @@ static void process_unreachable_connection(TcpConnDescriptor *connection) {
     connection->state = TCP_CONN_STATE_UNREACHABLE;
 
     struct netif *netif = connection->common.parent_ctx->netif;
-    err_t r = netif_input(connection->buffer, netif);
-    if (ERR_OK != r) {
+    pbuf *buf = std::exchange(connection->buffer, nullptr);
+    const err_t r = netif_input(buf, netif);
+    if (r != ERR_OK) {
+        pbuf_free(buf);
         log_conn(connection, err, "netif_input failed: {} ({})", lwip_strerr(r), r);
         tcp_cm_close_descriptor(connection->common.parent_ctx, connection->common.id, false);
         return;

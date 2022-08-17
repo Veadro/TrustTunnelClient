@@ -557,8 +557,6 @@ WIN_EXPORT VpnListenerConfig vpn_listener_config_clone(const VpnListenerConfig *
 /** Destroy cloned common listener config. */
 WIN_EXPORT void vpn_listener_config_destroy(VpnListenerConfig *config);
 
-typedef AG_ARRAY_OF(evbuffer_iovec) VpnPackets;
-
 /**
  * Pass data packets received from a client application to the client listener in case it
  * doesn't listen for incoming data by itself

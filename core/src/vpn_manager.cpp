@@ -22,8 +22,6 @@ using namespace std::chrono;
 
 static std::atomic_int g_next_id = 0;
 
-static VpnPackets vpn_packets_clone(VpnPackets packets);
-static void vpn_packets_destroy(VpnPackets *packets);
 static int ssl_verify_callback(const char *host_name, const sockaddr *host_ip, X509_STORE_CTX *ctx, void *arg);
 static void client_handler(void *arg, vpn_client::Event what, void *data);
 static void shutdown_cb(Vpn *vpn);
@@ -645,38 +643,21 @@ VpnDnsUpstreamValidationStatus vpn_validate_dns_upstream(const char *address) {
     return VPN_DUVS_OK;
 }
 
+std::vector<VpnPacket> c_packets_to_vector(const VpnPackets &packets) {
+    return std::vector<VpnPacket>{packets.data, packets.data + packets.size};
+}
+
+VpnPackets to_c_packets(std::vector<VpnPacket> &packets) {
+    return VpnPackets{packets.data(), (uint32_t) packets.size()};
+}
+
 void vpn_process_client_packets(Vpn *vpn, VpnPackets packets) {
     std::unique_lock l(vpn->stop_guard);
 
-    vpn->submit([vpn, packets = vpn_packets_clone(packets)]() mutable {
+    vpn->submit([vpn, packets_vector = c_packets_to_vector(packets)]() mutable {
+        VpnPackets packets = to_c_packets(packets_vector);
         vpn->client.process_client_packets(packets);
-        vpn_packets_destroy(&packets);
     });
-}
-
-static VpnPackets vpn_packets_clone(VpnPackets packets) {
-    VpnPackets copy = {};
-    copy.data = new evbuffer_iovec[packets.size];
-
-    for (size_t i = 0; i < packets.size; ++i) {
-        evbuffer_iovec packet = {malloc(packets.data[i].iov_len)};
-        if (packet.iov_base != nullptr) {
-            memcpy(packet.iov_base, packets.data[i].iov_base, packets.data[i].iov_len);
-            packet.iov_len = packets.data[i].iov_len;
-            copy.data[copy.size++] = packet;
-        }
-    }
-
-    return copy;
-}
-
-static void vpn_packets_destroy(VpnPackets *packets) {
-    if (packets) {
-        for (size_t i = 0; i < packets->size; ++i) {
-            free(packets->data[i].iov_base);
-        }
-        delete[] packets->data;
-    }
 }
 
 static int ssl_verify_callback(const char *host_name, const sockaddr *host_ip, X509_STORE_CTX *ctx, void *arg) {

@@ -19,7 +19,7 @@ static inline int process_icmp(TcpipCtx *ctx, struct pbuf *p, u16_t header_len, 
 static inline int process_icmp6(TcpipCtx *ctx, struct pbuf *p, u16_t header_len, const ip_addr_t *src_addr,
         const ip_addr_t *dst_addr, u16_t ttl);
 
-#define PASS_PACKET_TO_LWIP(p, header_len) (pbuf_header(p, header_len), false)
+#define PASS_PACKET_TO_LWIP(p, header_len) (pbuf_header_force(p, header_len), false)
 #define DROP_PACKET(p) (pbuf_free(p), true)
 #define PACKET_IS_DEFERRED (true)
 
@@ -42,7 +42,7 @@ int ip4_input_hook(struct pbuf *p, struct netif *inp) {
     if ((header_len > p->len) || (header_len < IP_HLEN)) {
         return PASS_PACKET_TO_LWIP(p, 0);
     }
-    pbuf_header(p, -(s16_t) header_len);
+    pbuf_header_force(p, -(s16_t) header_len);
     // Process payload
     switch (IPH_PROTO(iphdr)) {
     case IP_PROTO_TCP:
@@ -73,7 +73,7 @@ int ip6_input_hook(struct pbuf *p, struct netif *inp) {
     // Save next header type
     u8_t nexth = IP6H_NEXTH(ip6hdr);
     u16_t header_len = IP6_HLEN;
-    pbuf_header(p, -IP6_HLEN);
+    pbuf_header_force(p, -IP6_HLEN);
     // Skip options headers
     while (nexth != IP6_NEXTH_NONE) {
         switch (nexth) {
@@ -92,7 +92,7 @@ int ip6_input_hook(struct pbuf *p, struct netif *inp) {
                 return PASS_PACKET_TO_LWIP(p, header_len);
             }
             header_len += hlen;
-            pbuf_header(p, -(s16_t) hlen);
+            pbuf_header_force(p, -(s16_t) hlen);
             break;
         default:
             goto options_done;
@@ -122,7 +122,7 @@ static inline int forward_existing_tcp_entry(TcpConnDescriptor *entry, struct tc
 
 static inline int process_new_tcp_connection(TcpipCtx *ctx, struct pbuf *buffer, u16_t header_len,
         const ip_addr_t *source_addr, u16_t source_port, const ip_addr_t *destination_addr, u16_t destination_port) {
-    pbuf_header(buffer, header_len);
+    pbuf_header_force(buffer, header_len);
 
     TcpConnDescriptor *entry =
             tcp_cm_create_descriptor(ctx, buffer, source_addr, source_port, destination_addr, destination_port);
@@ -171,7 +171,7 @@ static inline int process_tcp(
     if (entry != nullptr) {
         switch (entry->state) {
         case TCP_CONN_STATE_UNREACHABLE:
-            pbuf_header(p, header_len);
+            pbuf_header_force(p, header_len);
             if (IP_IS_V4(src_addr)) {
                 icmp_dest_unreach(p, ICMP_DUR_NET);
             } else {
@@ -253,11 +253,11 @@ static int finalize_icmp_request(TcpipCtx *ctx, IcmpRequestDescriptor *request, 
     case ICMP_MT_ECHO_REPLY:
         return PASS_PACKET_TO_LWIP(request->buffer, header_len);
     case ICMP_MT_DESTINATION_UNREACHABLE:
-        pbuf_header(request->buffer, header_len);
+        pbuf_header_force(request->buffer, header_len);
         icmp_dest_unreach(request->buffer, (icmp_dur_type) request->reply_code);
         return DROP_PACKET(request->buffer);
     case ICMP_MT_TIME_EXCEEDED:
-        pbuf_header(request->buffer, header_len);
+        pbuf_header_force(request->buffer, header_len);
         icmp_time_exceeded(request->buffer, (icmp_te_type) request->reply_code);
         return DROP_PACKET(request->buffer);
     default:
@@ -286,13 +286,13 @@ static int finalize_icmpv6_request(TcpipCtx *ctx, IcmpRequestDescriptor *request
     switch (request->reply_type) {
     case ICMPV6_MT_DESTINATION_UNREACHABLE:
         icmp6_err_message_hook_enter(&request->src, ctx->netif);
-        pbuf_header(request->buffer, header_len);
+        pbuf_header_force(request->buffer, header_len);
         icmp6_dest_unreach(request->buffer, (icmp6_dur_code) request->reply_code);
         icmp6_err_message_hook_exit();
         return DROP_PACKET(request->buffer);
     case ICMPV6_MT_TIME_EXCEEDED:
         icmp6_err_message_hook_enter(&request->src, ctx->netif);
-        pbuf_header(request->buffer, header_len);
+        pbuf_header_force(request->buffer, header_len);
         icmp6_time_exceeded(request->buffer, (icmp6_te_code) request->reply_code);
         icmp6_err_message_hook_exit();
         return DROP_PACKET(request->buffer);
@@ -321,7 +321,7 @@ static int forward_existing_icmp_entry(
 
 static inline int process_new_icmp_request(TcpipCtx *ctx, struct pbuf *buffer, u16_t header_len, const ip_addr_t *src,
         const ip_addr_t *dst, u16_t id, u16_t seqno, u16_t ttl) {
-    pbuf_header(buffer, (s16_t) header_len);
+    pbuf_header_force(buffer, (s16_t) header_len);
 
     IcmpRequestDescriptor *request = icmp_rm_create_descriptor(ctx, src, dst, id, seqno, ttl, buffer);
     if (request == nullptr) {

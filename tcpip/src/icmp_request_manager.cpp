@@ -4,7 +4,7 @@
 
 #include "common/logger.h"
 #include "tcpip_common.h"
-#include "util.h"
+#include "tcpip_util.h"
 #include "vpn/utils.h"
 
 #define log_manager(ctx_, lvl_, fmt_, ...) lvl_##log((ctx_)->icmp.log, fmt_, ##__VA_ARGS__)

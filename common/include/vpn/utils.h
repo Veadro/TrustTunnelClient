@@ -95,6 +95,15 @@ typedef struct {
     VpnDnsStampInformalProperties properties;
 } VpnDnsStamp;
 
+typedef struct {
+    uint8_t *data;
+    size_t size;
+    void (*destructor)(void *destructor_arg, uint8_t *data);
+    void *destructor_arg;
+} VpnPacket;
+
+typedef AG_ARRAY_OF(VpnPacket) VpnPackets;
+
 /**
  * Convert milliseconds to timeval structure
  */

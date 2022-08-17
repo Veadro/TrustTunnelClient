@@ -80,8 +80,6 @@ target_link_libraries(vpnlibs_core vpnlibs_tcpip)
 
 set(TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/test)
 
-add_executable(test_standalone_client EXCLUDE_FROM_ALL ${TEST_DIR}/test_standalone_client.cpp)
-target_link_libraries(test_standalone_client vpnlibs_core)
 
 if (NOT MSVC)
 add_compile_options(-Wall -Wextra -Werror -Wimplicit-fallthrough
@@ -146,7 +144,7 @@ if(NOT WIN32)
     add_unit_test(test_vpn_manager_fsm ${TEST_DIR} "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
     add_unit_test(test_vpn_manager_fsm_recovery ${TEST_DIR} "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
 
-    add_dependencies(tests test_standalone_client standalone_client)
+    add_dependencies(tests standalone_client)
 endif()
 
 configure_file(test/standalone_client/standalone_client.conf ${CMAKE_CURRENT_BINARY_DIR}/standalone_client.conf COPYONLY)

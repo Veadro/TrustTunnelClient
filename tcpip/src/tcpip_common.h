@@ -17,6 +17,8 @@
 #include "tcp_conn_manager.h"
 #include "tcpip/tcpip.h"
 #include "udp_conn_manager.h"
+#include "vpn/utils.h"
+#include "vpn_packet_pool.h"
 
 #define EVENT_WITHOUT_TIMEOUT NULL
 #define EVENT_WITHOUT_FD (-1)
@@ -34,6 +36,7 @@ struct TcpipCtx {
     IcmpCtx icmp;               /**< ICMP requests context */
     struct netif *netif;        /**< Network interface */
     int pcap_fd;                /**< PCap output file descriptor */
+    VpnPacketPool *pool;        /**< Pool with pre-allocated data blocks for VpnPackets */
     ag::Logger logger{"TCPIP.COMMON"};
 };
 
@@ -84,9 +87,8 @@ void tcpip_refresh_connection_timeout(TcpipCtx *ctx, TcpipConnection *connection
  * Passes incoming packet to native TCP/IP stack and waits synchronously while they'll be processed
  * @param ctx pointer to context of TCP/IP stack
  * @param packets Array of incoming packet's buffers (one buffer - one packet)
- * @param count Incoming packet count
  */
-void tcpip_process_input_packets(TcpipCtx *ctx, const struct evbuffer_iovec *packets, int count);
+void tcpip_process_input_packets(TcpipCtx *ctx, VpnPackets *packets);
 
 void notify_connection_statistics(TcpipConnection *connection);
 

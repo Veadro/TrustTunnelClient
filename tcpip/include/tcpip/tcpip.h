@@ -180,9 +180,8 @@ void tcpip_sent_to_remote(TcpipCtx *ctx, uint64_t id, size_t n);
  *
  * @param ctx context of TCP/IP stack
  * @param packets Array of incoming packet's buffers (one buffer - one packet)
- * @param count Incoming packet count
  */
-void tcpip_tun_input(TcpipCtx *ctx, const struct evbuffer_iovec *packets, int count);
+void tcpip_tun_input(TcpipCtx *ctx, VpnPackets *packets);
 
 /**
  * Close a connection with given id

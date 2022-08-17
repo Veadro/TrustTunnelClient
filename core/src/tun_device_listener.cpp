@@ -354,7 +354,7 @@ void TunListener::turn_read(uint64_t id, bool on) {
 }
 
 int TunListener::process_client_packets(VpnPackets packets) {
-    tcpip_tun_input(m_tcpip, packets.data, packets.size);
+    tcpip_tun_input(m_tcpip, &packets);
     return 0;
 }
 

@@ -34,18 +34,19 @@
 
 #define SLEEP() sleep(100000)
 
-#define DEFAULT_MTU_SIZE 1500u
-#define DEFAULT_IPV4_ROUTE "0.0.0.0/0"
-#define DEFAULT_IPV6_ROUTE "::/0"
-#define DEFAULT_IPV6_ROUTE_UNICAST "2000::/3"
-#define DEFAULT_CONFIG_FILE "standalone_client.conf"
+static constexpr unsigned DEFAULT_MTU_SIZE = 1500;
+static constexpr std::string_view DEFAULT_IPV4_ROUTE = "0.0.0.0/0";
+static constexpr std::string_view DEFAULT_IPV6_ROUTE = "::/0";
+static constexpr std::string_view DEFAULT_IPV6_ROUTE_UNICAST = "2000::/3";
+static constexpr std::string_view DEFAULT_CONFIG_FILE = "standalone_client.conf";
+static constexpr std::string_view REDIRECT_OUTPUT = "> /dev/null";
 
 using namespace ag;
 
 static bool connect_to_server(Vpn *v, int line);
 static void vpn_handler(void *arg, VpnEvent what, void *data);
 
-static ag::Logger g_logger("STANDALONE_CLIENT");
+static const ag::Logger g_logger("STANDALONE_CLIENT");
 
 static const std::unordered_map<std::string, ag::LogLevel> LOG_LEVEL_MAP = {
         {"error", ag::LOG_LEVEL_ERROR},
@@ -247,57 +248,52 @@ static void sighandler(int /*sig*/) {
     }
 }
 
-static void fsystem(const char *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-
-    char cmd[1024];
-    vsnprintf(cmd, 1024, fmt, args);
-    infolog(g_logger, "{} {}", geteuid() == 0 ? "#" : "$", safe_to_string_view(cmd));
-    system(cmd);
-
-    va_end(args);
+template <typename... Ts>
+static void fsystem(std::string_view fmt, Ts&&... args) {
+    std::string cmd = fmt::vformat(fmt, fmt::make_format_args(args...)) + std::string(REDIRECT_OUTPUT);
+    tracelog(g_logger, "{} {}", geteuid() == 0 ? "#" : "$", cmd);
+    system(cmd.c_str());
 }
 
 static void setup_if(const TunInfo &info) {
 #ifdef __APPLE__
     fsystem("set -x\n");
-    fsystem("/sbin/ifconfig %s mtu %d up", info.name.c_str(), g_params.mtu_size);
+    fsystem("/sbin/ifconfig {} mtu {} up", info.name, g_params.mtu_size);
     std::string ipv4address = AG_FMT("172.16.218.{}", info.tun_num + 2);
     std::string ipv6address = AG_FMT("fd00::{:x}", info.tun_num + 2);
-    fsystem("/sbin/ifconfig %s inet add %s %s netmask 0xffffffff\n", info.name.c_str(), ipv4address.c_str(),
-            ipv4address.c_str());
-    fsystem("/sbin/ifconfig %s inet6 add %s prefixlen 64\n", info.name.c_str(), ipv6address.c_str());
+    fsystem("/sbin/ifconfig {} inet add {} {} netmask 0xffffffff\n", info.name, ipv4address,
+            ipv4address);
+    fsystem("/sbin/ifconfig {} inet6 add {} prefixlen 64\n", info.name, ipv6address);
 #endif // __APPLE__
 #ifdef __linux__
     std::string ipv4address = AG_FMT("172.16.218.{}", info.tun_num);
     std::string ipv6address = AG_FMT("fd00::{:x}", info.tun_num);
-    fsystem("ip addr add %s dev %s", ipv4address.c_str(), info.name.c_str());
-    fsystem("ip -6 addr add %s dev %s", ipv6address.c_str(), info.name.c_str());
-    fsystem("ip link set dev %s mtu %d up", info.name.c_str(), g_params.mtu_size);
+    fsystem("ip addr add {} dev {}", ipv4address, info.name);
+    fsystem("ip -6 addr add {} dev {}", ipv6address, info.name);
+    fsystem("ip link set dev {} mtu {} up", info.name, g_params.mtu_size);
 #endif // __linux__
 }
 
 static void setup_routes(const TunInfo &info) {
 #ifdef __APPLE__
     for (auto &route : g_params.ipv4_routes) {
-        fsystem("route add %s -iface %s", route.to_string().c_str(), info.name.c_str());
+        fsystem("route add {} -iface {}", route.to_string(), info.name);
     }
     for (auto &route : g_params.ipv6_routes) {
-        fsystem("route add -inet6 %s -iface %s", route.to_string().c_str(), info.name.c_str());
+        fsystem("route add -inet6 {} -iface {}", route.to_string(), info.name);
     }
 #endif // __APPLE__
 #ifdef __linux__
     for (auto &route : g_params.ipv4_routes) {
-        fsystem("ip ro add %s dev %s", route.to_string().c_str(), info.name.c_str());
+        fsystem("ip ro add {} dev {}", route.to_string(), info.name);
     }
     for (auto &route : g_params.ipv6_routes) {
-        fsystem("ip -6 ro add %s dev %s", route.to_string().c_str(), info.name.c_str());
+        fsystem("ip -6 ro add {} dev {}", route.to_string(), info.name);
     }
 #endif // __linux__
 }
 
-#ifdef __APPLE__
+#if defined(__APPLE__)
 static int tun_open(uint32_t num) {
     int fd;
     struct sockaddr_ctl addr;
@@ -334,251 +330,254 @@ static int tun_open(uint32_t num) {
     setup_if(g_tun_info);
 
     return fd;
-#endif // __APPLE__
-#ifdef __linux__
-    static int tun_open() {
-        evutil_socket_t fd;
+}
+#elif defined(__linux__)
+static int tun_open() {
+    evutil_socket_t fd;
 
-        if (fd = open("/dev/net/tun", O_RDWR); fd == -1) {
-            errlog(g_logger, "Failed to open /dev/net/tun: {}", strerror(errno));
-            return -1;
-        }
-
-        struct ifreq ifr = {};
-        ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
-
-        char devname[7];
-        memset(devname, 0, sizeof(devname));
-
-        if (ioctl(fd, TUNSETIFF, &ifr) == -1) {
-            errlog(g_logger, "ioctl TUNSETIFF failed: {}", strerror(errno));
-            evutil_closesocket(fd);
-            return -1;
-        }
-        g_tun_info = {fd, if_nametoindex(ifr.ifr_name), ifr.ifr_name};
-
-        infolog(g_logger, "Device {} opened, setting up\n", ifr.ifr_name);
-
-        setup_if(g_tun_info);
-
-        return fd;
-#else
-return -1;
-#endif // __linux__
-    }
-
-    static int create_tunnel() {
-#ifdef __APPLE__
-        for (uint8_t i = 0; i < 255; i++) {
-            if (int fd = tun_open(i); fd != -1) {
-                return fd;
-            }
-        }
-#endif // __APPLE__
-#ifdef __linux__
-        if (int fd = tun_open(); fd != -1) {
-            return fd;
-        }
-#endif //__linux__
+    if (fd = open("/dev/net/tun", O_RDWR); fd == -1) {
+        errlog(g_logger, "Failed to open /dev/net/tun: {}", strerror(errno));
         return -1;
     }
 
-    static bool connect_to_server(Vpn * v, int line) {
-        std::unique_lock l(g_connect_result_guard);
-        g_waiting_connect_result = true;
+    struct ifreq ifr = {};
+    ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
 
-        VpnConnectParameters parameters = {
-                .upstream_config = g_vpn_server_config,
-        };
-        VpnError err = vpn_connect(v, &parameters);
-        if (err.code != 0) {
-            errlog(g_logger, "Failed to connect to server (line={}): {} ({})\n", line, safe_to_string_view(err.text),
-                    err.code);
-        } else {
-            g_connect_barrier.wait(l, []() {
-                return g_stop || g_connect_result.has_value();
-            });
-        }
+    char devname[7];
+    memset(devname, 0, sizeof(devname));
 
-        bool result = err.code == VPN_EC_NOERROR && g_connect_result.value_or(false);
-
-        g_waiting_connect_result = false;
-        g_connect_result.reset();
-
-        return result;
+    if (ioctl(fd, TUNSETIFF, &ifr) == -1) {
+        errlog(g_logger, "ioctl TUNSETIFF failed: {}", strerror(errno));
+        evutil_closesocket(fd);
+        return -1;
     }
+    g_tun_info = {fd, if_nametoindex(ifr.ifr_name), ifr.ifr_name};
 
-    static void vpn_runner(ListenerType type) {
-        if (!connect_to_server(g_vpn, __LINE__)) {
-            vpn_stop(g_vpn);
-            return;
-        }
+    infolog(g_logger, "Device {} opened, setting up\n", ifr.ifr_name);
 
-        VpnListener *listener;
+    setup_if(g_tun_info);
 
-        switch (type) {
-        case LT_TUN:
-            setup_routes(g_tun_info);
-            listener = vpn_create_tun_listener(g_vpn, &g_vpn_tun_listener_config);
-            break;
-        case LT_SOCKS:
-            listener = vpn_create_socks_listener(g_vpn, &g_vpn_socks_listener_config);
-            break;
-        default:
-            assert(0);
-        }
-
-        assert(listener != nullptr);
-
-        auto error = vpn_listen(g_vpn, listener, &g_vpn_common_listener_config);
-        if (error.code != 0) {
-            errlog(g_logger, "Failed on start listening: {} ({})", safe_to_string_view(error.text),
-                    magic_enum::enum_name((VpnErrorCode) error.code));
-            close(g_tun_info.fd);
-            g_stop = true;
-        }
-    }
-
-    static void listener_runner(ListenerType listener_type) {
-        g_vpn = vpn_open(&g_vpn_settings);
-        if (g_vpn == nullptr) {
-            abort();
-        }
-
-        vpn_runner(listener_type);
-
-        while (!g_stop) {
-            SLEEP();
-        }
-
-        vpn_stop(g_vpn);
-        vpn_close(g_vpn);
-    }
-
-    static void vpn_handler(void *, VpnEvent what, void *data) {
-        switch (what) {
-        case VPN_EVENT_CLIENT_OUTPUT:
-        case VPN_EVENT_PROTECT_SOCKET:
-        case VPN_EVENT_ENDPOINT_CONNECTION_STATS:
-        case VPN_EVENT_DNS_UPSTREAM_UNAVAILABLE:
-            // do nothing
-            break;
-        case VPN_EVENT_VERIFY_CERTIFICATE: {
-            auto *event = (VpnVerifyCertificateEvent *) data;
-            const char *err = g_params.skip_verify ? nullptr : tls_verify_cert(event->ctx, nullptr);
-            if (err == nullptr) {
-                tracelog(g_logger, "Certificate verified successfully\n");
-                event->result = 0;
-            } else {
-                errlog(g_logger, "Failed to verify certificate: {}\n", err);
-                event->result = -1;
-            }
-            break;
-        }
-        case VPN_EVENT_STATE_CHANGED: {
-            const VpnStateChangedEvent *event = (VpnStateChangedEvent *) data;
-            if (event->state == VPN_SS_WAITING_RECOVERY) {
-                tracelog(g_logger, "Endpoint connection state changed: state={} to_next={}ms err={} {}\n", event->state,
-                        (int) event->waiting_recovery_info.time_to_next_ms, event->waiting_recovery_info.error.code,
-                        safe_to_string_view(event->waiting_recovery_info.error.text));
-            } else if (event->error.code != 0 && event->state != VPN_SS_CONNECTED) {
-                tracelog(g_logger, "Endpoint connection state changed: state={} err={} {}\n", event->state,
-                        event->error.code, safe_to_string_view(event->error.text));
-            }
-
-            std::scoped_lock l(g_connect_result_guard);
-            if (g_waiting_connect_result && (event->state == VPN_SS_CONNECTED || event->state == VPN_SS_DISCONNECTED)) {
-                g_connect_result = event->state == VPN_SS_CONNECTED;
-                g_connect_barrier.notify_one();
-            }
-            break;
-        }
-        case VPN_EVENT_CONNECT_REQUEST: {
-            const VpnConnectRequestEvent *event = (VpnConnectRequestEvent *) data;
-
-            VpnConnectionInfo info = {event->id};
-#ifndef REDIRECT_ONLY_TCP
-            info.action = VPN_CA_DEFAULT;
+    return fd;
+}
 #else
-        info.action = (event->proto == IPPROTO_TCP) ? VPN_CA_DEFAULT : VPN_CA_FORCE_BYPASS;
+static int tun_open() {
+    return -1;
+}
+#endif
+
+static int create_tunnel() {
+#ifdef __APPLE__
+    for (uint8_t i = 0; i < 255; i++) {
+        if (int fd = tun_open(i); fd != -1) {
+            return fd;
+        }
+    }
+#endif // __APPLE__
+#ifdef __linux__
+    if (int fd = tun_open(); fd != -1) {
+        return fd;
+    }
+#endif //__linux__
+    return -1;
+}
+
+static bool connect_to_server(Vpn * v, int line) {
+    std::unique_lock l(g_connect_result_guard);
+    g_waiting_connect_result = true;
+
+    VpnConnectParameters parameters = {
+            .upstream_config = g_vpn_server_config,
+    };
+    VpnError err = vpn_connect(v, &parameters);
+    if (err.code != 0) {
+        errlog(g_logger, "Failed to connect to server (line={}): {} ({})\n", line, safe_to_string_view(err.text),
+                err.code);
+    } else {
+        g_connect_barrier.wait(l, []() {
+            return g_stop || g_connect_result.has_value();
+        });
+    }
+
+    bool result = err.code == VPN_EC_NOERROR && g_connect_result.value_or(false);
+
+    g_waiting_connect_result = false;
+    g_connect_result.reset();
+
+    return result;
+}
+
+static void vpn_runner(ListenerType type) {
+    if (!connect_to_server(g_vpn, __LINE__)) {
+        vpn_stop(g_vpn);
+        return;
+    }
+
+    VpnListener *listener;
+
+    switch (type) {
+    case LT_TUN:
+        setup_routes(g_tun_info);
+        listener = vpn_create_tun_listener(g_vpn, &g_vpn_tun_listener_config);
+        break;
+    case LT_SOCKS:
+        listener = vpn_create_socks_listener(g_vpn, &g_vpn_socks_listener_config);
+        break;
+    default:
+        assert(0);
+    }
+
+    assert(listener != nullptr);
+
+    auto error = vpn_listen(g_vpn, listener, &g_vpn_common_listener_config);
+    if (error.code != 0) {
+        errlog(g_logger, "Failed on start listening: {} ({})", safe_to_string_view(error.text),
+                magic_enum::enum_name((VpnErrorCode) error.code));
+        close(g_tun_info.fd);
+        g_stop = true;
+    }
+}
+
+static void listener_runner(ListenerType listener_type) {
+    g_vpn = vpn_open(&g_vpn_settings);
+    if (g_vpn == nullptr) {
+        abort();
+    }
+
+    vpn_runner(listener_type);
+
+    while (!g_stop) {
+        SLEEP();
+    }
+
+    vpn_stop(g_vpn);
+    vpn_close(g_vpn);
+}
+
+static void vpn_handler(void *, VpnEvent what, void *data) {
+    switch (what) {
+    case VPN_EVENT_CLIENT_OUTPUT:
+    case VPN_EVENT_PROTECT_SOCKET:
+    case VPN_EVENT_ENDPOINT_CONNECTION_STATS:
+    case VPN_EVENT_DNS_UPSTREAM_UNAVAILABLE:
+        // do nothing
+        break;
+    case VPN_EVENT_VERIFY_CERTIFICATE: {
+        auto *event = (VpnVerifyCertificateEvent *) data;
+        const char *err = g_params.skip_verify ? nullptr : tls_verify_cert(event->ctx, nullptr);
+        if (err == nullptr) {
+            tracelog(g_logger, "Certificate verified successfully\n");
+            event->result = 0;
+        } else {
+            errlog(g_logger, "Failed to verify certificate: {}\n", err);
+            event->result = -1;
+        }
+        break;
+    }
+    case VPN_EVENT_STATE_CHANGED: {
+        const VpnStateChangedEvent *event = (VpnStateChangedEvent *) data;
+        if (event->state == VPN_SS_WAITING_RECOVERY) {
+            tracelog(g_logger, "Endpoint connection state changed: state={} to_next={}ms err={} {}\n", event->state,
+                    (int) event->waiting_recovery_info.time_to_next_ms, event->waiting_recovery_info.error.code,
+                    safe_to_string_view(event->waiting_recovery_info.error.text));
+        } else if (event->error.code != 0 && event->state != VPN_SS_CONNECTED) {
+            tracelog(g_logger, "Endpoint connection state changed: state={} err={} {}\n", event->state,
+                    event->error.code, safe_to_string_view(event->error.text));
+        }
+
+        std::scoped_lock l(g_connect_result_guard);
+        if (g_waiting_connect_result && (event->state == VPN_SS_CONNECTED || event->state == VPN_SS_DISCONNECTED)) {
+            g_connect_result = event->state == VPN_SS_CONNECTED;
+            g_connect_barrier.notify_one();
+        }
+        break;
+    }
+    case VPN_EVENT_CONNECT_REQUEST: {
+        const VpnConnectRequestEvent *event = (VpnConnectRequestEvent *) data;
+
+        VpnConnectionInfo info = {event->id};
+#ifndef REDIRECT_ONLY_TCP
+        info.action = VPN_CA_DEFAULT;
+#else
+    info.action = (event->proto == IPPROTO_TCP) ? VPN_CA_DEFAULT : VPN_CA_FORCE_BYPASS;
 #endif
 
 #ifdef FUZZY_ACTION
-            info.action = rand() % (VPN_CA_FORCE_REDIRECT + 1);
+        info.action = rand() % (VPN_CA_FORCE_REDIRECT + 1);
 #endif
 
-            info.appname = "standalone_client";
+        info.appname = "standalone_client";
 
-            vpn_complete_connect_request(g_vpn, &info);
-            break;
+        vpn_complete_connect_request(g_vpn, &info);
+        break;
+    }
+    }
+}
+
+static std::string get_config(const std::string &filename) {
+    auto file_str = read_file_to_str(filename);
+    if (file_str.has_value()) {
+        return file_str.value();
+    }
+    errlog(g_logger, "Cannot parse config file");
+    exit(1);
+}
+
+int main(int argc, char **argv) {
+    srand(time(nullptr));
+    signal(SIGINT, sighandler);
+    signal(SIGTERM, sighandler);
+    signal(SIGPIPE, SIG_IGN);
+    struct sigaction act{};
+    sigaction(SIGPIPE, &act, nullptr);
+
+    g_options.add_options()("s", "Skip verify certificate", cxxopts::value<bool>()->default_value("false"))(
+            "c,config", "Config file name.",
+            cxxopts::value<std::string>()->default_value(std::string(DEFAULT_CONFIG_FILE)))(
+            "l,loglevel", "Logging level. Possible values: error, warn, info, debug, trace.",
+            cxxopts::value<std::string>()->default_value("info"))("help", "Print usage");
+
+    auto result = g_options.parse(argc, argv);
+    if (result.count("help")) {
+        std::cout << g_options.help() << std::endl;
+        exit(0);
+    }
+    auto filename = result["config"].as<std::string>();
+    g_params.init(result, get_config(filename));
+
+    ag::Logger::set_log_level(g_params.loglevel);
+
+    g_vpn_settings.killswitch_enabled = true;
+    VpnEndpoint endpoints[] = {
+            {sockaddr_from_str(g_params.address.c_str()), g_params.hostname.c_str()},
+    };
+    g_vpn_server_config.location = (VpnLocation){"1", {endpoints, std::size(endpoints)}};
+    g_vpn_server_config.username = g_params.username.c_str();
+    g_vpn_server_config.password = g_params.password.c_str();
+
+    switch (g_params.listener_type) {
+    case LT_TUN:
+        if (create_tunnel() < 0) {
+            errlog(g_logger, "Failed to create tunnel");
+            exit(1);
+        } else {
+            g_vpn_tun_listener_config.fd = g_tun_info.fd;
+            g_vpn_tun_listener_config.mtu_size = g_params.mtu_size;
         }
-        }
+        break;
+    case LT_SOCKS:
+        g_vpn_socks_listener_config.listen_address = sockaddr_from_str(g_params.listener_address.c_str());
+        g_vpn_socks_listener_config.username = g_params.listener_username.c_str();
+        g_vpn_socks_listener_config.password = g_params.listener_pass.c_str();
+        break;
+    default:
+        assert(0);
     }
 
-    static std::string get_config(const std::string &filename) {
-        auto file_str = read_file_to_str(filename);
-        if (file_str.has_value()) {
-            return file_str.value();
-        }
-        errlog(g_logger, "Cannot parse config file");
-        exit(1);
+    if (!g_params.dns_upstream.empty()) {
+        g_vpn_common_listener_config.dns_upstream = g_params.dns_upstream.c_str();
     }
 
-    int main(int argc, char **argv) {
-        srand(time(nullptr));
-        signal(SIGINT, sighandler);
-        signal(SIGTERM, sighandler);
-        signal(SIGPIPE, SIG_IGN);
-        struct sigaction act{};
-        sigaction(SIGPIPE, &act, nullptr);
+    listener_runner(g_params.listener_type);
 
-        g_options.add_options()("s", "Skip verify certificate", cxxopts::value<bool>()->default_value("false"))(
-                "c,config", "Config file name.", cxxopts::value<std::string>()->default_value(DEFAULT_CONFIG_FILE))(
-                "l,loglevel", "Logging level. Possible values: error, warn, info, debug, trace.",
-                cxxopts::value<std::string>()->default_value("info"))("help", "Print usage");
-
-        auto result = g_options.parse(argc, argv);
-        if (result.count("help")) {
-            std::cout << g_options.help() << std::endl;
-            exit(0);
-        }
-        auto filename = result["config"].as<std::string>();
-        g_params.init(result, get_config(filename));
-
-        ag::Logger::set_log_level(g_params.loglevel);
-
-        g_vpn_settings.killswitch_enabled = true;
-        VpnEndpoint endpoints[] = {
-                {sockaddr_from_str(g_params.address.c_str()), g_params.hostname.c_str()},
-        };
-        g_vpn_server_config.location = (VpnLocation){"1", {endpoints, std::size(endpoints)}};
-        g_vpn_server_config.username = g_params.username.c_str();
-        g_vpn_server_config.password = g_params.password.c_str();
-
-        switch (g_params.listener_type) {
-        case LT_TUN:
-            if (create_tunnel() < 0) {
-                errlog(g_logger, "Failed to create tunnel");
-                exit(1);
-            } else {
-                g_vpn_tun_listener_config.fd = g_tun_info.fd;
-                g_vpn_tun_listener_config.mtu_size = g_params.mtu_size;
-            }
-            break;
-        case LT_SOCKS:
-            g_vpn_socks_listener_config.listen_address = sockaddr_from_str(g_params.listener_address.c_str());
-            g_vpn_socks_listener_config.username = g_params.listener_username.c_str();
-            g_vpn_socks_listener_config.password = g_params.listener_pass.c_str();
-            break;
-        default:
-            assert(0);
-        }
-
-        if (!g_params.dns_upstream.empty()) {
-            g_vpn_common_listener_config.dns_upstream = g_params.dns_upstream.c_str();
-        }
-
-        listener_runner(g_params.listener_type);
-
-        return 0;
-    }
+    return 0;
+}

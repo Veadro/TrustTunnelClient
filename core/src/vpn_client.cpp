@@ -514,6 +514,12 @@ VpnClient::~VpnClient() {
 void VpnClient::process_client_packets(VpnPackets packets) {
     if (!this->client_listener) {
         log_client(this, warn, "Packet listener is not initialized, dropping client packet.");
+        for (size_t i = 0; i < packets.size; ++i) {
+            auto p = packets.data[i];
+            if (p.destructor) {
+                p.destructor(p.destructor_arg, p.data);
+            }
+        }
         return;
     }
     this->client_listener->process_client_packets(packets);

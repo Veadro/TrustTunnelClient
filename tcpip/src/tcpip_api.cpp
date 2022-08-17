@@ -111,7 +111,7 @@ void *tcpip_get_arg(const TcpipCtx *ctx) {
     return ctx->parameters.handler.arg;
 }
 
-void tcpip_tun_input(TcpipCtx *ctx, const struct evbuffer_iovec *packets, int count) {
+void tcpip_tun_input(TcpipCtx *ctx, VpnPackets *packets) {
     if (ctx->parameters.tun_fd >= 0) {
         errlog(g_logger,
                 "tcpip_tun_input: Packets may be passed to tcpip_tun_input only in non-fd mode"
@@ -119,7 +119,7 @@ void tcpip_tun_input(TcpipCtx *ctx, const struct evbuffer_iovec *packets, int co
         return;
     }
 
-    tcpip_process_input_packets(ctx, packets, count);
+    tcpip_process_input_packets(ctx, packets);
 }
 
 void tcpip_close_connection(TcpipCtx *ctx, uint64_t id, bool graceful) {

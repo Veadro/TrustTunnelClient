@@ -23,8 +23,8 @@
 
 #include "common/logger.h"
 #include "tcpip_common.h"
+#include "tcpip_util.h"
 #include "udp_raw.h"
-#include "util.h"
 
 namespace ag {
 
