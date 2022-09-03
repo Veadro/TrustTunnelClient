@@ -1,6 +1,8 @@
 function(conan_bootstrap)
     cmake_parse_arguments(BS "" "SRCROOT;CONANFILE;SCOPE_NAME" "" ${ARGN})
+    # set(CONAN_EXPORTED OFF)
     include("${BS_SRCROOT}/cmake/conan.cmake")
+    get_filename_component(BS_SRCROOT_ABS "${BS_SRCROOT}" ABSOLUTE)
     if (NOT TARGET CONAN_DONE::${BS_SCOPE_NAME})
         # Profile settings
         if(ANDROID_ABI STREQUAL armeabi-v7a)
@@ -45,20 +47,26 @@ function(conan_bootstrap)
                             OUTPUT_QUIET
                             PROFILE_AUTO compiler.version compiler.libcxx
                             SETTINGS ${settings}
-                            ENV CMAKE_ORIGINAL_TOOLCHAIN=${CMAKE_TOOLCHAIN_FILE})
+                            INSTALL_FOLDER "${BS_SRCROOT_ABS}"
+                            ENV CMAKE_ORIGINAL_TOOLCHAIN=${CMAKE_TOOLCHAIN_FILE}
+            )
         elseif(WIN32)
             # don't set libcxx on windows to not to mix c++ libraries
             conan_cmake_run(CONANFILE "${BS_CONANFILE}"
                             PROFILE "${CONAN_PROFILE}"
                             BUILD missing
                             PROFILE_AUTO compiler.version
-                            SETTINGS ${settings})
+                            SETTINGS ${settings}
+                            INSTALL_FOLDER "${BS_SRCROOT_ABS}"
+            )
         else()
             conan_cmake_run(CONANFILE "${BS_CONANFILE}"
                             PROFILE "${CONAN_PROFILE}"
                             BUILD missing
                             PROFILE_AUTO compiler.version compiler.libcxx
-                            SETTINGS ${settings})
+                            SETTINGS ${settings}
+                            INSTALL_FOLDER "${BS_SRCROOT_ABS}"
+            )
         endif()
 
         conan_define_targets()
