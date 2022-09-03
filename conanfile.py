@@ -42,14 +42,14 @@ class VpnLibsConan(ConanFile):
         # self.options["native_libs_common"].commit_hash = "72731a36771d550ffae8c1223e0a129fefc2384c"
 
     def source(self):
-        self.run("git clone https://github.com/AdguardTeam/VpnLibs.git source_subfolder")
+        self.run("git init . && git remote add origin https://github.com/AdguardTeam/VpnLibs.git && git fetch")
 
         if self.version == "777":
             if self.options.commit_hash:
-                self.run("cd source_subfolder && git checkout -f %s" % self.options.commit_hash)
+                self.run("git checkout -f %s" % self.options.commit_hash)
         else:
             version_hash = self.conan_data["commit_hash"][self.version]["hash"]
-            self.run("cd source_subfolder && git checkout -f %s" % version_hash)
+            self.run("git checkout -f %s" % version_hash)
 
     def build(self):
         cmake = CMake(self)
@@ -64,7 +64,7 @@ class VpnLibsConan(ConanFile):
         if self.options.sanitize:
             cmake.definitions["CMAKE_C_FLAGS"] += f" -fno-omit-frame-pointer -fsanitize={self.options.sanitize}"
             cmake.definitions["CMAKE_CXX_FLAGS"] += f" -fno-omit-frame-pointer -fsanitize={self.options.sanitize}"
-        cmake.configure(source_folder="source_subfolder")
+        cmake.configure(source_folder=".", build_folder="build")
         cmake.build(target="vpnlibs_common")
         cmake.build(target="vpnlibs_core")
         cmake.build(target="vpnlibs_net")
@@ -79,7 +79,7 @@ class VpnLibsConan(ConanFile):
         ]
 
         for m in MODULES:
-            self.copy("*.h", dst="include", src="source_subfolder/%s/include" % m)
+            self.copy("*.h", dst="include", src="%s/include" % m)
 
         self.copy("*.lib", dst="lib", keep_path=False)
         self.copy("*.dll", dst="bin", keep_path=False)
