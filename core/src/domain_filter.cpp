@@ -95,7 +95,7 @@ bool DomainFilter::update_exclusions(VpnMode mode_, std::string_view exclusions)
 
 DomainFilterMatchStatus DomainFilter::match_domain(std::string_view domain) const {
     bool www_prefixed = starts_with(domain, WWW_PREFIX);
-    std::string seek = !www_prefixed ? std::string(domain) : std::string(domain.substr(WWW_PREFIX.length()));
+    std::string_view seek = !www_prefixed ? domain : domain.substr(WWW_PREFIX.length());
 
     while (true) {
         auto i = m_domains.find(seek);
@@ -117,7 +117,7 @@ DomainFilterMatchStatus DomainFilter::match_domain(std::string_view domain) cons
             break;
         }
 
-        seek.erase(0, next_dot + 1);
+        seek.remove_prefix(next_dot + 1);
     }
 
     return DFMS_DEFAULT;

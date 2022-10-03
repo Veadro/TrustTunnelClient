@@ -3,6 +3,7 @@
 #include <event2/listener.h>
 #include <event2/util.h>
 #include <khash.h>
+#include <magic_enum.hpp>
 
 #include "common/logger.h"
 #include "common/net_utils.h"
@@ -161,7 +162,7 @@ static bool socks_addr_equals(const ag::Socks5ConnectionAddress *lh, const ag::S
 static bool socks_addr_pair_equals(const AddressPair *lh, const AddressPair *rh);
 } // namespace ag
 
-typedef struct Connection Connection;
+struct Connection;
 KHASH_MAP_INIT_INT(connections_by_id, Connection *);
 KHASH_INIT(connections_by_addr, AddressPair *, Connection *, 1, ag::socks_addr_pair_hash, ag::socks_addr_pair_equals)
 
@@ -190,6 +191,7 @@ typedef struct ag::Socks5Listener {
 } Socks5Listener;
 
 typedef struct {
+    bool readable;
     size_t sent_bytes_since_flush;
     std::vector<std::vector<uint8_t>> pending_udp_packets;
     UdpRelay *relay;
@@ -199,7 +201,7 @@ typedef struct {
     SocketArg *sock_arg;
 } TcpSpecific;
 
-typedef struct Connection {
+struct Connection {
     ConnectionState state;
     uint64_t id;
     ag::TcpSocket *socket;
@@ -208,7 +210,7 @@ typedef struct Connection {
     std::string app_name;
     TcpSpecific tcp;
     UdpSpecific udp;
-} Connection;
+};
 
 typedef struct {
     Socks5Listener *listener;
@@ -616,6 +618,8 @@ void socks5_listener_turn_read(const Socks5Listener *listener, uint64_t id, bool
         Connection *conn = kh_value(listener->connections, i);
         if (conn->proto == IPPROTO_TCP) {
             tcp_socket_set_read_enabled(conn->socket, on);
+        } else {
+            conn->udp.readable = on;
         }
     } else {
         log_conn(listener, id, 0, dbg, "Connection was already closed or didn't exist");
@@ -815,6 +819,11 @@ static size_t handle_udp_read(Socks5Listener *listener, Connection *conn, const 
         pend_udp_packet(conn, data, length);
         break;
     case S5CONNS_ESTABLISHED: {
+        if (!conn->udp.readable) {
+            log_conn(listener, conn->id, conn->proto, dbg, "Connection isn't readable, dropping packet ({} bytes)", n);
+            break;
+        }
+
         Socks5ReadEvent event = {conn->id, data, length, 0};
         listener->handler.func(listener->handler.arg, SOCKS5L_EVENT_READ, &event);
         if (event.result == 0) {
@@ -823,7 +832,8 @@ static size_t handle_udp_read(Socks5Listener *listener, Connection *conn, const 
         break;
     }
     case S5CONNS_FAILED:
-        // just drop
+        log_conn(listener, conn->id, conn->proto, dbg, "Connection is in {} state, dropping packet ({} bytes)",
+                magic_enum::enum_name(conn->state), n);
         break;
     }
 

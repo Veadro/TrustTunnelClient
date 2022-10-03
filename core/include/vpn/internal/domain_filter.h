@@ -102,7 +102,7 @@ private:
     using ParseResult = std::variant<sockaddr_storage, DomainEntryInfo, DomainFilterValidationStatus>;
 
     VpnMode m_mode = VPN_MODE_GENERAL;
-    std::unordered_map<std::string, MatchFlagsSet> m_domains; // key - domain name / value - set of `MatchFlags`
+    StringKeyHashMap<MatchFlagsSet> m_domains; // key - domain name / value - set of `MatchFlags`
     std::unordered_set<sockaddr_storage> m_addresses;
     ag::LruTimeoutCache<ag::SockAddrTag, std::string> m_resolved_tags{DEFAULT_CACHE_SIZE, DEFAULT_TAG_TTL};
     ag::LruTimeoutCache<sockaddr_storage, uint8_t> m_exclusion_suspects{DEFAULT_CACHE_SIZE, DEFAULT_TAG_TTL};

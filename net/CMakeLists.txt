@@ -54,7 +54,7 @@ target_include_directories(vpnlibs_net PUBLIC include)
 target_link_libraries(vpnlibs_net vpnlibs_common)
 target_link_libraries(vpnlibs_net CONAN_PKG::zlib CONAN_PKG::brotli CONAN_PKG::http_parser)
 target_link_libraries(vpnlibs_net CONAN_PKG::ldns CONAN_PKG::nghttp2 CONAN_PKG::klib CONAN_PKG::openssl)
-target_link_libraries(vpnlibs_net CONAN_PKG::libevent CONAN_PKG::quiche)
+target_link_libraries(vpnlibs_net CONAN_PKG::libevent CONAN_PKG::quiche CONAN_PKG::magic_enum)
 if (WIN32)
     target_link_libraries(vpnlibs_net BCrypt) # Quiche requirement
 endif()
