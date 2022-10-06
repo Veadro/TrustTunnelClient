@@ -4,12 +4,10 @@
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
-#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <type_traits>
-#include <unordered_map>
 
 #include <event2/util.h>
 
@@ -105,26 +103,6 @@ typedef struct {
 } VpnPacket;
 
 typedef AG_ARRAY_OF(VpnPacket) VpnPackets;
-
-struct StringTransparentHasher {
-    using is_transparent [[maybe_unused]] = void; // NOLINT(readability-identifier-naming)
-    [[nodiscard]] size_t operator()(const char *txt) const {
-        return std::hash<std::string_view>{}(txt);
-    }
-    [[nodiscard]] size_t operator()(std::string_view txt) const {
-        return std::hash<std::string_view>{}(txt);
-    }
-    [[nodiscard]] size_t operator()(const std::string &txt) const {
-        return std::hash<std::string>{}(txt);
-    }
-};
-
-/**
- * This partially instantiated `std::unordered_map` allows looking up a hash table
- * with any string type without need to convert it to a `std::string`
- */
-template<class Value>
-using StringKeyHashMap = std::unordered_map<std::string, Value, StringTransparentHasher, std::equal_to<>>;
 
 /**
  * Convert milliseconds to timeval structure
