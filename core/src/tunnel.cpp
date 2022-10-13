@@ -965,6 +965,7 @@ void Tunnel::on_after_endpoint_disconnect(ServerUpstream *upstream) { // NOLINT(
     vpn_connections_foreach(this->connections.by_client_id, [upstream](VpnConnection *conn) {
         if (conn->upstream == upstream) {
             conn->flags.set(CONNF_SESSION_CLOSED);
+            conn->listener->turn_read(conn->client_id, false);
         }
     });
 
