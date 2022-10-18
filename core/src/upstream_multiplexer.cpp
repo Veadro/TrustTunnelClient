@@ -28,7 +28,7 @@ enum UpstreamState {
 struct UpstreamInfo {
     UpstreamInfo(const UpstreamMultiplexer::MakeUpstream &make_upstream,
             const VpnUpstreamProtocolConfig &protocol_config, int id, VpnClient *vpn,
-            decltype(SeverHandler::func) handler, std::unique_ptr<UpstreamCtx> ctx)
+            decltype(ServerHandler::func) handler, std::unique_ptr<UpstreamCtx> ctx)
             : upstream(make_upstream(protocol_config, id, vpn, {handler, ctx.get()}))
             , ctx(std::move(ctx)) {
     }
@@ -49,7 +49,7 @@ UpstreamMultiplexer::UpstreamMultiplexer(
 
 UpstreamMultiplexer::~UpstreamMultiplexer() = default;
 
-bool UpstreamMultiplexer::init(VpnClient *vpn, SeverHandler handler) {
+bool UpstreamMultiplexer::init(VpnClient *vpn, ServerHandler handler) {
     if (!this->ServerUpstream::init(vpn, handler)) {
         log_mux(this, err, "Failed to initialize base upstream");
         deinit();

@@ -1,4 +1,5 @@
 #include "net/os_tunnel.h"
+#include "net/utils.h"
 
 #ifdef _WIN32
 #define POPEN _popen
@@ -125,7 +126,7 @@ const ag::VpnOsTunnelSettings *ag::vpn_os_tunnel_settings_defaults() {
 }
 
 const ag::VpnWinTunnelSettings *ag::vpn_win_tunnel_settings_defaults() {
-    static const char *dns_server = "94.140.14.140";
+    static const char *dns_server = AG_UNFILTERED_DNS_IPS_V4[0].data();
     static const ag::VpnWinTunnelSettings win_settings = {
             .adapter_name = "Adguard VpnLibs test tunnel",
             .dns_servers = {&dns_server, 1}, // Adguard DNS unfiltered

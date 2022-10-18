@@ -198,7 +198,7 @@ void HttpUdpMultiplexer::close_connection(uint64_t id) {
         m_recv_connection.state = RCS_DROPPING;
     }
 
-    SeverHandler *handler = &m_params.parent->handler;
+    ServerHandler *handler = &m_params.parent->handler;
     handler->func(handler->arg, SERVER_EVENT_CONNECTION_CLOSED, &id);
 }
 

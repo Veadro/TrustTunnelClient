@@ -84,7 +84,7 @@ DirectUpstream::DirectUpstream(int id)
         : ServerUpstream(id) {
 }
 DirectUpstream::~DirectUpstream() = default;
-bool DirectUpstream::init(VpnClient *vpn, SeverHandler handler) {
+bool DirectUpstream::init(VpnClient *vpn, ServerHandler handler) {
     ServerUpstream::init(vpn, handler);
     return true;
 }
@@ -139,7 +139,7 @@ UpstreamMultiplexer::UpstreamMultiplexer(int id, const VpnUpstreamProtocolConfig
         : ServerUpstream(id) {
 }
 UpstreamMultiplexer::~UpstreamMultiplexer() = default;
-bool UpstreamMultiplexer::init(VpnClient *vpn, SeverHandler handler) {
+bool UpstreamMultiplexer::init(VpnClient *vpn, ServerHandler handler) {
     ServerUpstream::init(vpn, handler);
     auto *test = (VpnClientTest *) vpn->parameters.handler.arg;
     test->redirect_upstream = this;

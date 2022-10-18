@@ -47,7 +47,7 @@ DirectUpstream::DirectUpstream(int id)
 
 DirectUpstream::~DirectUpstream() = default;
 
-bool DirectUpstream::init(VpnClient *vpn, SeverHandler handler) {
+bool DirectUpstream::init(VpnClient *vpn, ServerHandler handler) {
     if (!this->ServerUpstream::init(vpn, handler)) {
         log_upstream(this, err, "Failed to initialize base upstream");
         deinit();
@@ -208,16 +208,17 @@ uint64_t DirectUpstream::open_tcp_connection(const TunnelAddressPair *addr) {
     if (const sockaddr_storage *dst = std::get_if<sockaddr_storage>(&addr->dst); dst != nullptr) {
         param = {
                 .connect_by = TCP_SOCKET_CB_ADDR,
-                .by_addr = { .addr = (sockaddr *) dst },
+                .by_addr = {.addr = (sockaddr *) dst},
         };
     } else if (const NamePort *dst = std::get_if<NamePort>(&addr->dst); dst != nullptr) {
         param = {
                 .connect_by = TCP_SOCKET_CB_HOSTNAME,
-                .by_name = {
-                        .dns_base = this->vpn->parameters.dns_base,
-                        .host = dst->name.c_str(),
-                        .port = dst->port,
-                },
+                .by_name =
+                        {
+                                .dns_base = this->vpn->parameters.dns_base,
+                                .host = dst->name.c_str(),
+                                .port = dst->port,
+                        },
         };
     } else {
         log_upstream(this, err, "Empty destination address");
@@ -435,7 +436,7 @@ void DirectUpstream::on_icmp_request(IcmpEchoRequestEvent &event) {
     sockaddr_set_port((sockaddr *) &peer, ICMP_PING_EMULATION_PORT);
     TcpSocketConnectParameters param = {
             .connect_by = TCP_SOCKET_CB_ADDR,
-            .by_addr = { .addr = (sockaddr *) &peer },
+            .by_addr = {.addr = (sockaddr *) &peer},
     };
     if (0 != tcp_socket_connect(sock.get(), &param).code) {
         event.result = -1;

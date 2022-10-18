@@ -310,7 +310,7 @@ static std::unique_ptr<ServerUpstream> make_upstream(const VpnUpstreamProtocolCo
         upstream = std::make_unique<UpstreamMultiplexer>(VpnClient::next_upstream_id(), protocol,
                 protocol.http2.connections_num,
                 [](const VpnUpstreamProtocolConfig &protocol_config, int id, VpnClient *vpn,
-                        SeverHandler handler) -> std::unique_ptr<MultiplexableUpstream> {
+                        ServerHandler handler) -> std::unique_ptr<MultiplexableUpstream> {
                     return std::make_unique<Http2Upstream>(protocol_config, id, vpn, handler);
                 });
         break;

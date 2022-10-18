@@ -21,7 +21,7 @@ public:
     static constexpr size_t NEW_UPSTREAM_CONNECTIONS_NUM_THRESHOLD = 5;
 
     using MakeUpstream = std::unique_ptr<MultiplexableUpstream> (*)(
-            const VpnUpstreamProtocolConfig &protocol_config, int id, VpnClient *vpn, SeverHandler handler);
+            const VpnUpstreamProtocolConfig &protocol_config, int id, VpnClient *vpn, ServerHandler handler);
 
     UpstreamMultiplexer(
             int id, const VpnUpstreamProtocolConfig &protocol_config, size_t upstreams_num, MakeUpstream make_upstream);
@@ -56,7 +56,7 @@ private:
 
     ag::Logger m_log{"UPSTREAM_MUX"};
 
-    bool init(VpnClient *vpn, SeverHandler handler) override;
+    bool init(VpnClient *vpn, ServerHandler handler) override;
     void deinit() override;
     bool open_session(std::optional<Millis> timeout) override;
     void close_session() override;

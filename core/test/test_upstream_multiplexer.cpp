@@ -9,13 +9,13 @@
 using namespace ag;
 
 struct TestUpstreamInfo {
-    SeverHandler handler;
+    ServerHandler handler;
     std::unordered_set<uint64_t> connections;
 };
 
 class TestUpstream : public MultiplexableUpstream {
 public:
-    TestUpstream(int id, VpnClient *vpn, SeverHandler handler)
+    TestUpstream(int id, VpnClient *vpn, ServerHandler handler)
             : MultiplexableUpstream({}, id, vpn, handler) {
     }
 
@@ -70,7 +70,7 @@ public:
 
         this->mux = std::make_unique<UpstreamMultiplexer>(0, VpnUpstreamProtocolConfig{}, 0,
                 [](const VpnUpstreamProtocolConfig &, int id, VpnClient *vpn,
-                        SeverHandler handler) -> std::unique_ptr<MultiplexableUpstream> {
+                        ServerHandler handler) -> std::unique_ptr<MultiplexableUpstream> {
                     return std::make_unique<TestUpstream>(id, vpn, handler);
                 });
         ASSERT_TRUE(this->mux->init(&this->vpn, {upstream_handler, this}));
@@ -100,21 +100,21 @@ public:
     void notify_session_opened(int id) {
         ASSERT_EQ(g_upstreams.count(id), 1);
 
-        SeverHandler *handler = &g_upstreams[id].handler;
+        ServerHandler *handler = &g_upstreams[id].handler;
         handler->func(handler->arg, SERVER_EVENT_SESSION_OPENED, nullptr);
     }
 
     void notify_session_closed(int id) {
         ASSERT_EQ(g_upstreams.count(id), 1);
 
-        SeverHandler *handler = &g_upstreams[id].handler;
+        ServerHandler *handler = &g_upstreams[id].handler;
         handler->func(handler->arg, SERVER_EVENT_SESSION_CLOSED, nullptr);
     }
 
     void notify_session_error(int id, VpnErrorCode e) {
         ASSERT_EQ(g_upstreams.count(id), 1);
 
-        SeverHandler *handler = &g_upstreams[id].handler;
+        ServerHandler *handler = &g_upstreams[id].handler;
         ServerError event = {NON_ID, {e, "test"}};
         handler->func(handler->arg, SERVER_EVENT_ERROR, &event);
     }
@@ -148,7 +148,7 @@ public:
         });
         ASSERT_NE(conn_it, g_upstreams.end());
 
-        SeverHandler *handler = &g_upstreams[conn_it->first].handler;
+        ServerHandler *handler = &g_upstreams[conn_it->first].handler;
         handler->func(handler->arg, SERVER_EVENT_CONNECTION_OPENED, &conn_id);
     }
 
@@ -156,7 +156,7 @@ public:
         ASSERT_EQ(g_upstreams.count(upstream_id), 1) << upstream_id;
         ASSERT_EQ(g_upstreams[upstream_id].connections.erase(conn_id), 1) << conn_id;
 
-        SeverHandler *handler = &g_upstreams[upstream_id].handler;
+        ServerHandler *handler = &g_upstreams[upstream_id].handler;
         handler->func(handler->arg, SERVER_EVENT_CONNECTION_CLOSED, &conn_id);
     }
 

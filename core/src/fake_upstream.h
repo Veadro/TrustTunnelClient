@@ -22,7 +22,7 @@ private:
     event_loop::AutoTaskId m_async_task;
     bool m_session_open = false;
 
-    bool init(VpnClient *vpn, SeverHandler handler) override;
+    bool init(VpnClient *vpn, ServerHandler handler) override;
     void deinit() override;
     bool open_session(std::optional<Millis> timeout) override;
     void close_session() override;

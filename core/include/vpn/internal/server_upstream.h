@@ -51,7 +51,7 @@ struct ServerError {
     VpnError error;
 };
 
-struct SeverHandler {
+struct ServerHandler {
     /**
      * Event handling function
      * @param arg user argument
@@ -70,7 +70,7 @@ class ServerUpstream {
 public:
     const std::optional<VpnUpstreamProtocolConfig> PROTOCOL_CONFIG;
     VpnClient *vpn = nullptr;
-    SeverHandler handler = {};
+    ServerHandler handler = {};
     int id;
 
     explicit ServerUpstream(int id, std::optional<VpnUpstreamProtocolConfig> protocol_config = std::nullopt)
@@ -91,7 +91,7 @@ public:
      * @param handler server events handler
      * @return true if initialized successfully, false otherwise
      */
-    virtual bool init(VpnClient *vpn, SeverHandler handler) {
+    virtual bool init(VpnClient *vpn, ServerHandler handler) {
         this->vpn = vpn;
         this->handler = handler;
         return true;

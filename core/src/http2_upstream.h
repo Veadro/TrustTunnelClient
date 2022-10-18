@@ -22,7 +22,7 @@ class Http2Upstream : public MultiplexableUpstream {
 public:
     static constexpr int DEFAULT_PORT = 443;
 
-    Http2Upstream(const VpnUpstreamProtocolConfig &protocol_config, int id, VpnClient *vpn, SeverHandler handler);
+    Http2Upstream(const VpnUpstreamProtocolConfig &protocol_config, int id, VpnClient *vpn, ServerHandler handler);
     ~Http2Upstream() override;
 
     Http2Upstream(const Http2Upstream &) = delete;

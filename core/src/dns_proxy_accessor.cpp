@@ -14,15 +14,11 @@ using namespace std::chrono;
 
 namespace ag {
 
-static constexpr std::string_view BOOTSTRAP_ADDRESSES[] = {
-        "94.140.14.140:53",
-};
-
 static dns::DnsProxySettings make_dns_proxy_settings(const DnsProxyAccessor::Parameters &parameters, milliseconds timeout) {
     dns::DnsProxySettings settings = dns::DnsProxySettings::get_default();
     settings.upstreams = {{
             .address = parameters.resolver_address,
-            .bootstrap = {std::begin(BOOTSTRAP_ADDRESSES), std::end(BOOTSTRAP_ADDRESSES)},
+            .bootstrap = {std::begin(AG_UNFILTERED_DNS_IPS_V4), std::end(AG_UNFILTERED_DNS_IPS_V4)},
             .timeout = timeout,
             .id = 0,
     }};

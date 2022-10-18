@@ -79,7 +79,7 @@ Http3Upstream::Http3Upstream(int id, const VpnUpstreamProtocolConfig &protocol_c
 Http3Upstream::~Http3Upstream() {
 }
 
-bool Http3Upstream::init(VpnClient *vpn, SeverHandler handler) {
+bool Http3Upstream::init(VpnClient *vpn, ServerHandler handler) {
     if (!this->ServerUpstream::init(vpn, handler)) {
         log_upstream(this, err, "Failed to initialize base upstream");
         deinit();

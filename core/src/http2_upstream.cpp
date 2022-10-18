@@ -40,7 +40,7 @@ struct CompleteCtx {
 };
 
 Http2Upstream::Http2Upstream(
-        const VpnUpstreamProtocolConfig &protocol_config, int id, VpnClient *vpn, SeverHandler handler)
+        const VpnUpstreamProtocolConfig &protocol_config, int id, VpnClient *vpn, ServerHandler handler)
         : MultiplexableUpstream(protocol_config, id, vpn, handler)
         , m_udp_mux({this, send_connect_request_callback, send_data_callback, consume_callback})
         , m_icmp_mux({this, send_connect_request_callback, send_data_callback, consume_callback})
@@ -83,7 +83,7 @@ std::pair<uint64_t, Http2Upstream::TcpConnection *> Http2Upstream::get_conn_by_s
 }
 
 void Http2Upstream::handle_response(const HttpHeadersEvent *http_event) {
-    SeverHandler *handler = &this->handler;
+    ServerHandler *handler = &this->handler;
 
     uint32_t stream_id = http_event->stream_id;
     if (stream_id == m_udp_mux.get_stream_id()) {

@@ -49,7 +49,7 @@ private:
 
     ag::Logger m_log{"DIRECT_UPSTREAM"};
 
-    bool init(VpnClient *vpn, SeverHandler handler) override;
+    bool init(VpnClient *vpn, ServerHandler handler) override;
     void deinit() override;
     bool open_session(std::optional<Millis> timeout) override;
     void close_session() override;

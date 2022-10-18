@@ -12,7 +12,7 @@ namespace ag {
 class MultiplexableUpstream : public ServerUpstream {
 public:
     MultiplexableUpstream(
-            const VpnUpstreamProtocolConfig &protocol_config, int id, VpnClient *vpn, SeverHandler handler)
+            const VpnUpstreamProtocolConfig &protocol_config, int id, VpnClient *vpn, ServerHandler handler)
             : ServerUpstream(id, protocol_config)
             , m_id(id) {
         if (!ServerUpstream::init(vpn, handler)) {

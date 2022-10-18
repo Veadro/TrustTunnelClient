@@ -132,7 +132,7 @@ U8View HttpIcmpMultiplexer::process_reply_chunk(U8View data) {
     reply.code = reader.get_u8().value();
     reply.seqno = reader.get_u16().value();
 
-    SeverHandler handler = m_params.parent->handler;
+    ServerHandler handler = m_params.parent->handler;
     handler.func(handler.arg, SERVER_EVENT_ECHO_REPLY, &reply);
 
     m_reply_buffer.clear();

@@ -10,7 +10,7 @@ FakeUpstream::FakeUpstream(int id)
 
 FakeUpstream::~FakeUpstream() = default;
 
-bool FakeUpstream::init(VpnClient *vpn, SeverHandler handler) {
+bool FakeUpstream::init(VpnClient *vpn, ServerHandler handler) {
     if (!this->ServerUpstream::init(vpn, handler)) {
         deinit();
         return false;

@@ -107,7 +107,7 @@ private:
     std::optional<int64_t> m_idle_timeout_at_ns;
     event_loop::AutoTaskId m_close_on_idle_task_id;
 
-    bool init(VpnClient *vpn, SeverHandler handler) override;
+    bool init(VpnClient *vpn, ServerHandler handler) override;
     void deinit() override;
     bool open_session(std::optional<Millis> timeout) override;
     void close_session() override;

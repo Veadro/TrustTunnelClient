@@ -14,17 +14,18 @@ using namespace std::chrono;
 namespace ag {
 
 static const sockaddr_storage BOOTSTRAP_ADDRESSES[] = {
-        sockaddr_from_str("94.140.14.140:53"),
-        sockaddr_from_str("94.140.14.141:53"),
+        sockaddr_from_str(AG_FMT("{}:53", AG_UNFILTERED_DNS_IPS_V4[0]).c_str()),
+        sockaddr_from_str(AG_FMT("{}:53", AG_UNFILTERED_DNS_IPS_V4[1]).c_str()),
         sockaddr_from_str("1.1.1.1:53"),
         sockaddr_from_str("8.8.8.8:53"),
 };
 
 static const sockaddr_storage CUSTOM_SRC_IP = sockaddr_from_str("127.0.0.11");
 static constexpr std::string_view CUSTOM_APP_NAME = "__vpn_dns_resolver__";
-static constexpr std::string_view RESOLVER_DOMAIN = "dns-unfiltered.adguard.com";
+static constexpr std::string_view RESOLVER_DOMAIN = AG_UNFILTERED_DNS_HOSTNAME;
 /// Manually resolved `RESOLVER_DOMAIN`
-static const sockaddr_storage DEFAULT_RESOLVER_ADDRESS = sockaddr_from_str("94.140.14.140:53");
+static const sockaddr_storage DEFAULT_RESOLVER_ADDRESS =
+        sockaddr_from_str(AG_FMT("{}:53", AG_UNFILTERED_DNS_IPS_V4[0]).c_str());
 static constexpr size_t RESOLVE_CAPACITIES[magic_enum::enum_count<VpnDnsResolverQueue>()] = {
         /** VDRQ_BACKGROUND */ VpnDnsResolver::MAX_PARALLEL_BACKGROUND_RESOLVES,
         /** VDRQ_FOREGROUND */ std::numeric_limits<size_t>::max(),

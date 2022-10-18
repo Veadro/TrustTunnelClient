@@ -105,13 +105,25 @@ struct IcmpEchoRequestEvent {
  * The value must not match any of the standard codes from
  * https://www.iana.org/assignments/icmp-parameters/icmp-parameters.xhtml.
  */
-static const uint8_t ICMP_MT_DROP = 84;
-static const size_t UDP_MAX_DATAGRAM_SIZE = 65535;
-static const int DEFAULT_PING_TIMEOUT_MS = 10 * 1000;
-static const int DEFAULT_PING_ROUNDS = 3;
+constexpr uint8_t ICMP_MT_DROP = 84;
+constexpr size_t UDP_MAX_DATAGRAM_SIZE = 65535;
+constexpr int DEFAULT_PING_TIMEOUT_MS = 10 * 1000;
+constexpr int DEFAULT_PING_ROUNDS = 3;
 
-static constexpr std::string_view HTTP_METHOD_CONNECT = "CONNECT";
-static constexpr std::string_view HTTP_METHOD_GET = "GET";
+constexpr std::string_view HTTP_METHOD_CONNECT = "CONNECT";
+constexpr std::string_view HTTP_METHOD_GET = "GET";
+
+constexpr std::string_view AG_UNFILTERED_DNS_HOSTNAME = "dns-unfiltered.adguard.com";
+/** Manually resolved `AG_UNFILTERED_DNS_HOSTNAME` */
+constexpr std::string_view AG_UNFILTERED_DNS_IPS_V4[] = {
+        "94.140.14.140",
+        "94.140.14.141",
+};
+/** Manually resolved `AG_UNFILTERED_DNS_HOSTNAME` */
+constexpr std::string_view AG_UNFILTERED_DNS_IPS_V6[] = {
+        "2a10:50c0::1:ff",
+        "2a10:50c0::2:ff",
+};
 
 /**
  * Serializes HTTP headers structure to valid HTTP/1.1 message (request or response)

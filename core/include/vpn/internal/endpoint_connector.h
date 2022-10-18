@@ -30,7 +30,7 @@ struct EndpointConnectorParameters {
     /// Parent VPN client
     VpnClient *vpn_client = nullptr;
     /// Upstream handler which will be set to the upstream in case of successful connection
-    SeverHandler upstream_handler = {};
+    ServerHandler upstream_handler = {};
     /// Connector handler
     EndpointConnectorHandler connector_handler = {};
 };
