@@ -1,7 +1,5 @@
 #pragma once
 
-#include <vector>
-
 #include "net/utils.h"
 #include "vpn/event_loop.h"
 
@@ -18,7 +16,7 @@ namespace ag {
  *        - note, that low RTT value does not make endpoint to be selected
  */
 
-typedef struct LocationsPinger LocationsPinger;
+struct LocationsPinger;
 
 typedef struct {
     uint32_t timeout_ms;                // ping operation timeout (if 0, `DEFAULT_PING_TIMEOUT_MS` will be assigned)

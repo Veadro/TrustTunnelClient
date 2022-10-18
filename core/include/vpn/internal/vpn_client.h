@@ -30,7 +30,7 @@ namespace ag {
 namespace vpn_client {
 
 enum Event {
-    EVENT_PROTECT_SOCKET,     /** Raised when socket needs to be protected (raised with `socket_protect_event_t`) */
+    EVENT_PROTECT_SOCKET,     /** Raised when socket needs to be protected (raised with `SocketProtectEvent`) */
     EVENT_VERIFY_CERTIFICATE, /** Raised when VPN needs to verify certificate (raised with
                                  `VpnVerifyCertificateEvent`) */
     EVENT_CONNECTED,          /** Raised when VPN client connected to endpoint gracefully (raised with null) */

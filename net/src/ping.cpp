@@ -22,6 +22,7 @@
 #include <event2/event.h>
 
 #include "common/logger.h"
+#include "net/os_tunnel.h"
 #include "net/utils.h"
 #include "vpn/utils.h"
 
@@ -354,17 +355,23 @@ static void do_prepare(void *arg) {
             int option = (it->dest.ss_family == AF_INET) ? IP_BOUND_IF : IPV6_BOUND_IF;
             int level = (it->dest.ss_family == AF_INET) ? IPPROTO_IP : IPPROTO_IPV6;
             int error = setsockopt(it->fd.get(), level, option, &it->bound_if, sizeof(it->bound_if));
-#else
+#else // #ifdef __MACH__
             int error = setsockopt(
                     it->fd.get(), SOL_SOCKET, SO_BINDTODEVICE, it->bound_if_name.data(), it->bound_if_name.size());
-#endif
+#endif // #ifdef __MACH__
             if (error) {
-                log_ping(self, dbg, "Failed to connect to {} via {}: faild to bind socket to interface: ({}) {}",
+                log_ping(self, dbg, "Failed to connect to {} via {}: failed to bind socket to interface: ({}) {}",
                         sockaddr_to_str((sockaddr *) &it->dest), it->bound_if_name, errno, strerror(errno));
                 goto error;
             }
         }
-#endif
+#else // #ifndef _WIN32
+        if (!vpn_win_socket_protect(it->fd.get(), (sockaddr *) &it->dest)) {
+            log_ping(self, dbg, "Failed to connect to {} via {}: failed to protect socket",
+                    sockaddr_to_str((sockaddr *) &it->dest), it->bound_if_name);
+            goto error;
+        }
+#endif // #ifndef _WIN32
         it->event.reset(event_new(vpn_event_loop_get_base(self->loop), it->fd.get(), EV_WRITE, on_event, self));
         if (it->event == nullptr) {
             log_ping(self, dbg, "Failed to connect to {} via {}: failed to create event",

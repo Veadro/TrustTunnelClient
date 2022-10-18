@@ -22,7 +22,7 @@ struct TcpSocket;
 typedef enum {
     /**< Raised on `tcp_socket_connect` result is ready (raised with null) */
     TCP_SOCKET_EVENT_CONNECTED,
-    /**< Raised whenever socket has some data from connected peer (raised with `tcp_socket_read_event_t`) */
+    /**< Raised whenever socket has some data from connected peer (raised with `TcpSocketReadEvent`) */
     TCP_SOCKET_EVENT_READ,
     /**< Raised whenever socket sent some data in network (raised with `tcp_socket_sent_event_t`) */
     TCP_SOCKET_EVENT_SENT,
@@ -30,7 +30,7 @@ typedef enum {
     TCP_SOCKET_EVENT_ERROR,
     /**< Raised on written data is sent (raised with null) */
     TCP_SOCKET_EVENT_WRITE_FLUSH,
-    /**< Raised when socket needs to be protected (raised with `socket_protect_event_t`) */
+    /**< Raised when socket needs to be protected (raised with `SocketProtectEvent`) */
     TCP_SOCKET_EVENT_PROTECT,
 } TcpSocketEvent;
 

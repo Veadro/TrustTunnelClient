@@ -359,10 +359,12 @@ void *ag::vpn_win_tunnel_create(ag::VpnOsTunnelSettings *settings, ag::VpnWinTun
     }
     return tunnel;
 }
+
 void ag::vpn_win_tunnel_destroy(void *win_tunnel) {
     delete (VpnWinTunnel *) win_tunnel;
 }
-static DWORD get_win_bound_if_index() {
+
+uint32_t ag::vpn_win_detect_active_if() {
     // first find physical network cards interfaces
     HKEY current_key;
     TCHAR subkey[BUFSIZ];
@@ -401,16 +403,17 @@ static DWORD get_win_bound_if_index() {
         DWORD error = GetIfEntry2(&row);
         if ((error == ERROR_SUCCESS) && (row.OperStatus == IfOperStatusUp)) {
             result_idx = row.InterfaceIndex;
-            return result_idx;
+            break;
         }
     }
-    return result_idx;
+    return uint32_t(result_idx);
 }
+
 bool ag::vpn_win_socket_protect(evutil_socket_t fd, const sockaddr *addr) {
-    if (g_win_bound_if == 0) {
-        return false;
+    uint32_t bound_if = g_win_bound_if;
+    if (bound_if == 0) {
+        return true;
     }
-    int error = 0;
 
     SOCKADDR_INET source_best{};
     MIB_IPFORWARD_ROW2 row{};
@@ -418,57 +421,61 @@ bool ag::vpn_win_socket_protect(evutil_socket_t fd, const sockaddr *addr) {
     dest.si_family = addr->sa_family;
 
     if (addr->sa_family == AF_INET) {
-        struct sockaddr_in to_bind {};
-        to_bind.sin_family = addr->sa_family;
-        to_bind.sin_port = 0;
+        sockaddr_in to_bind{
+                .sin_family = addr->sa_family,
+        };
         const auto *sin = (const sockaddr_in *) addr;
         dest.Ipv4.sin_addr = sin->sin_addr;
         dest.Ipv4.sin_port = sin->sin_port;
-        char test_addr[ag::IPV4_ADDRESS_SIZE];
-        inet_ntop(AF_INET, &sin->sin_addr, (PSTR) &test_addr, ag::IPV4_ADDRESS_SIZE);
-        error = GetBestRoute2(nullptr, g_win_bound_if, nullptr, &dest, 0, &row, &source_best);
-        if (error != ERROR_SUCCESS) {
-            errlog(logger, "{}", ag::sys::strerror(error));
-            inet_pton(AF_INET, "127.0.0.1", &(to_bind.sin_addr));
+        if (int error = GetBestRoute2(nullptr, bound_if, nullptr, &dest, 0, &row, &source_best);
+                error != ERROR_SUCCESS) {
+            errlog(logger, "GetBestRoute2(): {}", ag::sys::strerror(error));
+            to_bind.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         } else {
             to_bind.sin_addr = source_best.Ipv4.sin_addr;
         }
-        error = bind(fd, (SOCKADDR *) &to_bind, sizeof(to_bind));
-        setsockopt(fd, IPPROTO_IP, IP_UNICAST_IF, (char *) &g_win_bound_if, sizeof(g_win_bound_if));
-        if (error == SOCKET_ERROR) {
-            errlog(logger, "bind failed with error: {}", ag::sys::strerror(WSAGetLastError()));
+        // Without `bind()` it may not work or work unexpectedly.
+        // https://lists.zx2c4.com/pipermail/wireguard/2019-September/004541.html
+        if (0 != bind(fd, (SOCKADDR *) &to_bind, sizeof(to_bind))) {
+            errlog(logger, "bind(): {}", ag::sys::strerror(WSAGetLastError()));
+            return false;
+        }
+        if (0 != setsockopt(fd, IPPROTO_IP, IP_UNICAST_IF, (char *) &bound_if, sizeof(bound_if))) {
+            errlog(logger, "setsockopt(): {}", ag::sys::strerror(WSAGetLastError()));
             return false;
         }
     } else if (addr->sa_family == AF_INET6) {
-        struct sockaddr_in6 to_bind {};
-        to_bind.sin6_family = addr->sa_family;
-        to_bind.sin6_port = 0;
+        sockaddr_in6 to_bind{
+                .sin6_family = addr->sa_family,
+        };
         const auto *sin = (const sockaddr_in6 *) addr;
         dest.Ipv6.sin6_addr = sin->sin6_addr;
         dest.Ipv6.sin6_port = sin->sin6_port;
-        char test_addr[ag::IPV6_ADDRESS_SIZE];
-        inet_ntop(AF_INET6, &sin->sin6_addr, (PSTR) &test_addr, ag::IPV6_ADDRESS_SIZE);
-        error = GetBestRoute2(nullptr, g_win_bound_if, nullptr, &dest, 0, &row, &source_best);
-        if (error != ERROR_SUCCESS) {
-            errlog(logger, "{}", ag::sys::strerror(error));
-            inet_pton(AF_INET6, "::1", &(to_bind.sin6_addr));
+        if (int error = GetBestRoute2(nullptr, bound_if, nullptr, &dest, 0, &row, &source_best);
+                error != ERROR_SUCCESS) {
+            errlog(logger, "GetBestRoute2(): {}", ag::sys::strerror(error));
+            memcpy(&to_bind.sin6_addr, &in6addr_loopback, sizeof(in6addr_loopback));
         } else {
             to_bind.sin6_addr = source_best.Ipv6.sin6_addr;
+            to_bind.sin6_scope_id = source_best.Ipv6.sin6_scope_id;
         }
-
-        error = bind(fd, (SOCKADDR *) &to_bind, sizeof(to_bind));
-        setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_IF, (char *) &g_win_bound_if, sizeof(g_win_bound_if));
-        if (error == SOCKET_ERROR) {
-            errlog(logger, "bind failed with error: {}", ag::sys::strerror(WSAGetLastError()));
+        // Without `bind()` it may not work or work unexpectedly.
+        // https://lists.zx2c4.com/pipermail/wireguard/2019-September/004541.html
+        if (0 != bind(fd, (SOCKADDR *) &to_bind, sizeof(to_bind))) {
+            errlog(logger, "bind(): {}", ag::sys::strerror(WSAGetLastError()));
             return false;
         }
+        if (0 != setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_IF, (char *) &bound_if, sizeof(bound_if))) {
+            errlog(logger, "setsockopt(): {}", ag::sys::strerror(WSAGetLastError()));
+            return false;
+        }
+    } else {
+        errlog(logger, "Unexpected address family: {}", addr->sa_family);
+        return false;
     }
     return true;
 }
+
 void ag::vpn_win_set_bound_if(uint32_t if_index) {
-    if (if_index != 0) {
-        g_win_bound_if = if_index;
-        return;
-    }
-    g_win_bound_if = get_win_bound_if_index();
+    g_win_bound_if = if_index;
 }

@@ -217,7 +217,7 @@ typedef struct {
  * VPN client application events identifiers
  */
 typedef enum {
-    VPN_EVENT_PROTECT_SOCKET,     /** Raised when socket needs to be protected (raised with `socket_protect_event_t`) */
+    VPN_EVENT_PROTECT_SOCKET,     /** Raised when socket needs to be protected (raised with `SocketProtectEvent`) */
     VPN_EVENT_VERIFY_CERTIFICATE, /** Raised when VPN needs to verify certificate (raised with
                                      `VpnVerifyCertificateEvent`) */
     VPN_EVENT_STATE_CHANGED, /** Raised when VPN endpoint session state is changed (raised with `VpnStateChangedEvent`)

@@ -31,7 +31,7 @@ typedef enum {
     SOCKS5L_EVENT_DATA_SENT, /**< Called when some data was sent to client (raised with `socks5l_data_sent_event_t`) */
     SOCKS5L_EVENT_CONNECTION_CLOSED, /**< Called when connection is closed by client (raised with
                                         `socks5l_connection_closed_event_t`) */
-    SOCKS5L_EVENT_PROTECT_SOCKET, /**< Called when socket needs to be protected (raised with `socket_protect_event_t`)
+    SOCKS5L_EVENT_PROTECT_SOCKET, /**< Called when socket needs to be protected (raised with `SocketProtectEvent`)
                                    */
 } Socks5ListenerEvent;
 

@@ -1,5 +1,10 @@
 # CHANGELOG
 
+* [Changed] [Windows] Calling `vpn_win_set_bound_if()` now turns off the socket protection instead of
+  detecting an active network interface by itself. It's up to the application to call the new method
+  `vpn_win_detect_active_if()` and pass its result to `vpn_win_set_bound_if()` to activate the socket
+  protection.
+
 ## 0.91.10
 
 * [Feature] Added Wintun support. Dll downloaded from www.wintun.net is needed for standalone_client to run under Windows.

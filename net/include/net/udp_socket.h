@@ -13,9 +13,9 @@ namespace ag {
 typedef struct UdpSocket UdpSocket;
 
 typedef enum {
-    UDP_SOCKET_EVENT_PROTECT, /**< Raised when socket needs to be protected (raised with `socket_protect_event_t`) */
+    UDP_SOCKET_EVENT_PROTECT, /**< Raised when socket needs to be protected (raised with `SocketProtectEvent`) */
     UDP_SOCKET_EVENT_READ,    /**< Raised whenever socket has some data to read from (raised with
-                                 `tcp_socket_read_event_t`) */
+                                 `UdpSocketReadEvent`) */
     UDP_SOCKET_EVENT_TIMEOUT, /**< Raised if there was no activity on socket for specified time (raised with `null`) */
 } UdpSocketEvent;
 
