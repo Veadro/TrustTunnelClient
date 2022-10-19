@@ -44,17 +44,17 @@ typedef enum {
                                         buffer to store the ID) */
     TCPIP_EVENT_CONNECT_REQUEST,     /**< Called when new incoming connection is appeared,
                                           before pass it into the TCP/IP stack to process (raised with
-                                        `tcpip_connect_request_event_t`) */
+                                        `TcpipConnectRequestEvent`) */
     TCPIP_EVENT_CONNECTION_ACCEPTED, /**< Called when passed connection is accepted (raised with connection id) */
     TCPIP_EVENT_READ,                /**< Called whenever TCP/IP stack got data to be sent to a remote host (raised with
-                                        `tcpip_read_event_t`) */
-    TCPIP_EVENT_DATA_SENT, /**< Called when we sent some data to local client (raised with `tcpip_data_sent_event_t`) */
+                                        `TcpipReadEvent`) */
+    TCPIP_EVENT_DATA_SENT, /**< Called when we sent some data to local client (raised with `TcpipDataSentEvent`) */
     TCPIP_EVENT_CONNECTION_CLOSED, /**< Called whenever connection is closed (raised with connection id) */
     TCPIP_EVENT_STAT_NOTIFY,       /**< Notifies higher layer of number of sent and received bytes
-                                        via connection with pointed identificator (raised with `tcpip_stat_event_t`) */
+                                        via connection with pointed identifier (raised with `TcpipStatEvent`) */
     TCPIP_EVENT_TUN_OUTPUT, /**< Called whenever TCP/IP stack got data to be sent to a TUN-like device (raised with
-                               `tcpip_tun_output_event_t`) */
-    TCPIP_EVENT_ICMP_ECHO,  /**< Called whenever ICMP echo request is received (raised with `icmp_echo_request_event_t`)
+                               `TcpipTunOutputEvent`) */
+    TCPIP_EVENT_ICMP_ECHO,  /**< Called whenever ICMP echo request is received (raised with `IcmpEchoRequestEvent`)
                              */
 } TcpipEvent;
 

@@ -252,12 +252,20 @@ void TunListener::tcpip_handler(void *arg, TcpipEvent what, void *data) {
         break;
     }
     case TCPIP_EVENT_TUN_OUTPUT: {
+        const auto *tcpip_event = (TcpipTunOutputEvent *) data;
         if (listener->m_config.tunnel) {
-            auto *event = (TcpipTunOutputEvent *) data;
-            listener->m_config.tunnel->send_packet({event->packet.chunks, event->packet.chunks_num});
+            listener->m_config.tunnel->send_packet({tcpip_event->packet.chunks, tcpip_event->packet.chunks_num});
             break;
         }
-        listener->handler.func(listener->handler.arg, CLIENT_EVENT_OUTPUT, data);
+
+        VpnClientOutputEvent vpn_event = {
+                .family = tcpip_event->family,
+                .packet = {
+                        .chunks_num = tcpip_event->packet.chunks_num,
+                        .chunks = (iovec *) tcpip_event->packet.chunks,
+                },
+        };
+        listener->handler.func(listener->handler.arg, CLIENT_EVENT_OUTPUT, &vpn_event);
         break;
     }
     case TCPIP_EVENT_ICMP_ECHO:
