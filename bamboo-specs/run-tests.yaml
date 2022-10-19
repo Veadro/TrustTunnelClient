@@ -97,7 +97,6 @@ Run tests on Windows:
                 ..
 
             cmake --build . --target tests --parallel || exit /b 1
-            ctest -D ExperimentalTest --no-compress-output || exit /b 1
     - script:
         description: Run tests
         interpreter: BINSH_OR_CMDEXE
