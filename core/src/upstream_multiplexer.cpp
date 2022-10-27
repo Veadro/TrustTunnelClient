@@ -63,7 +63,13 @@ void UpstreamMultiplexer::deinit() {
 }
 
 bool UpstreamMultiplexer::open_session(std::optional<Millis> timeout) {
-    assert(m_upstreams_pool.empty());
+    log_mux(this, trace, "...");
+
+    if (!m_upstreams_pool.empty()) {
+        log_mux(this, warn, "Invalid state");
+        assert(0);
+        return false;
+    }
 
     int upstream_id = select_upstream_for_connection();
     if (!open_new_upstream(upstream_id, timeout)) {
@@ -79,9 +85,15 @@ void UpstreamMultiplexer::close_session() {
         info->upstream->close_session();
     }
     m_upstreams_pool.clear();
+    m_closed_upstreams.clear();
 }
 
 uint64_t UpstreamMultiplexer::open_connection(const TunnelAddressPair *addr, int proto, std::string_view app_name) {
+    if (m_upstreams_pool.empty()) {
+        log_mux(this, dbg, "Session closed");
+        return NON_ID;
+    }
+
     int upstream_id = select_upstream_for_connection();
     uint64_t conn_id = this->vpn->upstream_conn_id_generator.get();
 
@@ -243,24 +255,12 @@ void UpstreamMultiplexer::mark_closed_upstream(int upstream_id, event_loop::Auto
 }
 
 void UpstreamMultiplexer::finalize_closed_upstream(int upstream_id, bool async) {
-    static constexpr auto ACTION = [](UpstreamMultiplexer *mux, int id) {
-        if (auto i = mux->m_closed_upstreams.find(id); i != mux->m_closed_upstreams.end()) {
-            i->second->deferred_task_id.release();
-            mux->m_closed_upstreams.erase(i);
-        }
-        log_mux(mux, dbg, "Remaining upstreams={} connections={} pending connections={}", mux->m_upstreams_pool.size(),
-                mux->m_connections.size(), mux->m_pending_connections.size());
-        if (mux->m_upstreams_pool.empty() && mux->m_closed_upstreams.empty()) {
-            mux->handler.func(mux->handler.arg, SERVER_EVENT_SESSION_CLOSED, nullptr);
-        }
-    };
+    log_mux(this, dbg, "id={}", upstream_id);
 
-    if (!async) {
-        ACTION(this, upstream_id);
-    } else {
+    if (async) {
         auto it = m_closed_upstreams.find(upstream_id);
         if (it == m_closed_upstreams.end()) {
-            log_mux(this, err, "Inexistent upstream: id={}", upstream_id);
+            log_mux(this, warn, "Inexistent upstream: id={}", upstream_id);
             assert(0);
             return;
         }
@@ -271,9 +271,28 @@ void UpstreamMultiplexer::finalize_closed_upstream(int upstream_id, bool async) 
                         ctx,
                         [](void *arg, TaskId) {
                             auto *ctx = (UpstreamCtx *) arg;
-                            ACTION(ctx->mux, ctx->id);
+                            ctx->mux->finalize_closed_upstream(ctx->id, false);
                         },
                 });
+        return;
+    }
+
+    if (auto node = m_closed_upstreams.extract(upstream_id); !node.empty()) {
+        node.mapped()->deferred_task_id.release();
+    }
+
+    log_mux(this, dbg, "Remaining upstreams={}, connections={}, pending connections={}", m_upstreams_pool.size(),
+            m_connections.size(), m_pending_connections.size());
+    if (!m_upstreams_pool.empty() || !m_closed_upstreams.empty()) {
+        return;
+    }
+
+    log_mux(this, dbg, "All child upstreams are closed");
+    if (m_pending_error.has_value()) {
+        ServerError error = {NON_ID, std::exchange(m_pending_error, std::nullopt).value()};
+        this->handler.func(this->handler.arg, SERVER_EVENT_ERROR, &error);
+    } else {
+        this->handler.func(this->handler.arg, SERVER_EVENT_SESSION_CLOSED, nullptr);
     }
 }
 
@@ -358,7 +377,29 @@ void UpstreamMultiplexer::child_upstream_handler(void *arg, ServerEvent what, vo
         } else if (is_fatal_error(event->error)
                 // do not ignore errors on a health checking upstream
                 || mux->m_health_check_upstream_id == ctx->id) {
-            mux->handler.func(mux->handler.arg, SERVER_EVENT_ERROR, data);
+            if (event->error.code != 0) {
+                mux->m_pending_error = event->error;
+            }
+            while (!mux->m_upstreams_pool.empty()) {
+                const auto &[upstream_id, info] = *mux->m_upstreams_pool.begin();
+                mux->mark_closed_upstream(upstream_id,
+                        event_loop::submit(mux->vpn->parameters.ev_loop,
+                                {
+                                        info->ctx.get(),
+                                        [](void *arg, TaskId) {
+                                            auto *ctx = (UpstreamCtx *) arg;
+                                            UpstreamMultiplexer *mux = ctx->mux;
+                                            auto it = mux->m_closed_upstreams.find(ctx->id);
+                                            if (it != mux->m_closed_upstreams.end()) {
+                                                it->second->upstream->close_session();
+                                            } else {
+                                                log_mux(mux, err, "Inexistent upstream: id={}", ctx->id);
+                                                assert(0);
+                                            }
+                                            mux->finalize_closed_upstream(ctx->id, false);
+                                        },
+                                }));
+            }
         } else {
             mux->mark_closed_upstream(ctx->id,
                     event_loop::submit(mux->vpn->parameters.ev_loop,
@@ -438,7 +479,8 @@ int UpstreamMultiplexer::select_upstream_for_connection() {
     }
 
     // otherwise, create a new one
-    return m_next_upstream_id++;
+    static std::atomic<int> next_upstream_id = 0;
+    return next_upstream_id.fetch_add(1, std::memory_order_relaxed);
 }
 
 bool UpstreamMultiplexer::open_new_upstream(int id, std::optional<Millis> timeout) {

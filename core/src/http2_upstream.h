@@ -52,11 +52,11 @@ private:
     TcpSocketPtr m_socket;
     bool m_in_handler = false;
     bool m_closed = false;
+    std::optional<VpnError> m_pending_session_error;
     std::unordered_map<uint64_t, TcpConnection> m_tcp_connections;
     std::unordered_map<uint32_t, uint64_t> m_conn_id_by_stream_id;
     HttpUdpMultiplexer m_udp_mux;
     HttpIcmpMultiplexer m_icmp_mux;
-    uint64_t m_next_session_id = 0;
     std::string m_credentials;
     std::optional<HealthCheckInfo> m_health_check_info;
     // For client initiated streams ids are odd numbers
@@ -92,7 +92,7 @@ private:
      */
     std::optional<uint32_t> send_connect_request(const TunnelAddress *dst_addr, std::string_view app_name);
 
-    void close_session_inner();
+    void close_session_inner(std::optional<VpnError> error);
     void clean_tcp_connection_data(uint64_t id);
     int handle_read(uint64_t id, const uint8_t *data, size_t length);
     void handle_response(const HttpHeadersEvent *http_event);

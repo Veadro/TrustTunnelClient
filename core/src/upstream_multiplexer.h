@@ -48,10 +48,10 @@ private:
     std::unordered_map<int, std::unique_ptr<UpstreamInfo>> m_upstreams_pool;
     size_t m_max_upstreams_num = DEFAULT_UPSTREAMS_NUM;
     std::unordered_map<uint64_t, PendingConnection> m_pending_connections;
-    int m_next_upstream_id = 0;
     std::unordered_map<int, std::unique_ptr<UpstreamInfo>> m_closed_upstreams; // Upstreams waiting to be deleted
     std::optional<int> m_health_check_upstream_id; // id of an upstream which performs health check
     MakeUpstream m_make_upstream;
+    std::optional<VpnError> m_pending_error;
     std::vector<event_loop::AutoTaskId> m_failed_icmp_pings;
 
     ag::Logger m_log{"UPSTREAM_MUX"};

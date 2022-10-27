@@ -486,7 +486,7 @@ int http2_session_close(HttpSession *session) {
     log_sess(session, trace, "{} leftover streams", (int) kh_size(h2_session->streams));
     for (khiter_t iter = kh_begin(h2_session->streams); iter != kh_end(h2_session->streams); ++iter) {
         if (kh_exist(h2_session->streams, iter)) {
-            stream_destroy(kh_value(h2_session->streams, iter));
+            close_stream(session, iter, HTTP_SESSION_INVALID_STATE_ERROR);
         }
     }
     kh_destroy(h2_streams_ht, h2_session->streams);

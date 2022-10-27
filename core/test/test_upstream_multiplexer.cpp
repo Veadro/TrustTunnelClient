@@ -57,7 +57,6 @@ public:
 
     DeclPtr<VpnEventLoop, &vpn_event_loop_destroy> ev_loop{vpn_event_loop_create()};
     VpnClient vpn;
-    std::unique_ptr<ServerUpstream> mux;
     int events = 0;
 
     static void upstream_handler(void *arg, ServerEvent what, void *) {
@@ -68,14 +67,14 @@ public:
     void SetUp() override {
         g_open_session_result = true;
 
-        this->mux = std::make_unique<UpstreamMultiplexer>(0, VpnUpstreamProtocolConfig{}, 0,
+        this->vpn.endpoint_upstream = std::make_unique<UpstreamMultiplexer>(0, VpnUpstreamProtocolConfig{}, 0,
                 [](const VpnUpstreamProtocolConfig &, int id, VpnClient *vpn,
                         ServerHandler handler) -> std::unique_ptr<MultiplexableUpstream> {
                     return std::make_unique<TestUpstream>(id, vpn, handler);
                 });
-        ASSERT_TRUE(this->mux->init(&this->vpn, {upstream_handler, this}));
+        ASSERT_TRUE(this->vpn.endpoint_upstream->init(&this->vpn, {upstream_handler, this}));
 
-        ASSERT_TRUE(this->mux->open_session());
+        ASSERT_TRUE(this->vpn.endpoint_upstream->open_session());
         ASSERT_EQ(g_upstreams.size(), 1);
 
         ASSERT_NO_FATAL_FAILURE(notify_session_opened(g_upstreams.begin()->first));
@@ -84,16 +83,16 @@ public:
     }
 
     void TearDown() override {
+        bool were_some = !g_upstreams.empty();
         while (!g_upstreams.empty()) {
             EXPECT_NO_FATAL_FAILURE(close_upstream(g_upstreams.begin()->first));
         }
 
         run_event_loop_once();
 
-        EXPECT_TRUE(is_raised(SERVER_EVENT_SESSION_CLOSED)) << std::hex << this->events;
-
-        this->mux.reset();
-        this->events = 0;
+        if (were_some) {
+            EXPECT_TRUE(is_raised(SERVER_EVENT_SESSION_CLOSED)) << std::hex << this->events;
+        }
         g_upstreams.clear();
     }
 
@@ -121,7 +120,7 @@ public:
 
     uint64_t initiate_connection() { // NOLINT(readability-make-member-function-const)
         TunnelAddressPair addr;
-        uint64_t conn_id = mux->open_connection(&addr, IPPROTO_TCP, "");
+        uint64_t conn_id = this->vpn.endpoint_upstream->open_connection(&addr, IPPROTO_TCP, "");
         return conn_id;
     }
 
@@ -362,10 +361,8 @@ TEST_F(UpstreamMuxTest, FatalErrorOnSomeUpstream) {
 
     int id = g_upstreams.begin()->first;
     ASSERT_NO_FATAL_FAILURE(notify_session_error(id, VPN_EC_AUTH_REQUIRED));
-    ASSERT_NO_FATAL_FAILURE(close_upstream(id));
-
     run_event_loop_once();
-
+    ASSERT_TRUE(g_upstreams.empty());
     ASSERT_TRUE(is_raised(SERVER_EVENT_ERROR)) << std::hex << events;
 }
 
@@ -377,14 +374,13 @@ TEST_F(UpstreamMuxTest, ErrorOnHealthCheckingUpstream) {
         ASSERT_NO_FATAL_FAILURE(open_connection());
     }
 
-    VpnError error = mux->do_health_check();
+    VpnError error = this->vpn.endpoint_upstream->do_health_check();
     ASSERT_EQ(error.code, VPN_EC_NOERROR) << error.text;
     ASSERT_TRUE(g_health_checking_upstream_id.has_value());
 
     ASSERT_NO_FATAL_FAILURE(notify_session_error(g_health_checking_upstream_id.value(), VPN_EC_ERROR));
-
     run_event_loop_once();
-
+    ASSERT_TRUE(g_upstreams.empty());
     ASSERT_TRUE(is_raised(SERVER_EVENT_ERROR)) << std::hex << events;
 }
 

@@ -344,8 +344,11 @@ static bool check_upstream(const Tunnel *self, const VpnConnection *conn, const 
 void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *data) {
     switch (what) {
     case SERVER_EVENT_SESSION_OPENED:
-        assert(!this->endpoint_upstream_connected);
-        this->endpoint_upstream_connected = true;
+        log_tun(this, dbg, "Upstream: {}", (void *) upstream);
+        if (upstream == this->vpn->endpoint_upstream.get()) {
+            assert(!this->endpoint_upstream_connected);
+            this->endpoint_upstream_connected = true;
+        }
         break;
     case SERVER_EVENT_HEALTH_CHECK_RESULT:
         // do nothing
@@ -881,6 +884,13 @@ void Tunnel::complete_connect_request(uint64_t id, std::optional<VpnConnectActio
     }
 
     conn->upstream = upstream;
+    if (!this->endpoint_upstream_connected && conn->upstream == this->vpn->endpoint_upstream.get()) {
+        log_conn(this, conn, dbg, "Rejecting connection redirected to endpoint we're not connected to");
+        conn->upstream = nullptr;
+        close_client_side_connection(this, conn, 0, false);
+        return;
+    }
+
     if (conn->upstream != nullptr) {
         if (action == VPN_CA_FORCE_BYPASS && this->vpn->dns_proxy != nullptr
                 && conn->flags.test(CONNF_ROUTE_TO_DNS_PROXY)) {

@@ -216,6 +216,8 @@ public:
         client_listener = (TestListener *) vpn.client_listener.get();
 
         ASSERT_TRUE(tun.init(&vpn));
+
+        tun.upstream_handler(vpn.endpoint_upstream.get(), SERVER_EVENT_SESSION_OPENED, nullptr);
     }
 
     void TearDown() override {
@@ -367,8 +369,6 @@ public:
         this->fake_upstream = (TestFakeUpstream *) tun.fake_upstream.get();
 
         ASSERT_TRUE(vpn.domain_filter.update_exclusions(VPN_MODE_GENERAL, "localhost"));
-
-        tun.upstream_handler(vpn.endpoint_upstream.get(), SERVER_EVENT_SESSION_OPENED, nullptr);
 
         ASSERT_NO_FATAL_FAILURE(do_dns_resolve());
 

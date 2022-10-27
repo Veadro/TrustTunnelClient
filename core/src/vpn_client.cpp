@@ -293,6 +293,13 @@ static void submit_health_check(VpnClient *vpn, milliseconds postpone) {
                     [](void *arg, TaskId task_id) {
                         auto *vpn = (VpnClient *) arg;
                         release_deferred_task(vpn, task_id);
+
+                        if (vpn->fsm.get_state() != vpn_client::S_CONNECTED) {
+                            log_client(vpn, dbg, "Ignore submitted health check due to state: {}",
+                                    magic_enum::enum_name((vpn_client::State) vpn->fsm.get_state()));
+                            return;
+                        }
+
                         VpnError error = vpn->endpoint_upstream->do_health_check();
                         if (error.code != VPN_EC_NOERROR) {
                             vpn->fsm.perform_transition(vpn_client::E_HEALTH_CHECK_READY, &error);

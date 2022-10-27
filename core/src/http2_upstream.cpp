@@ -281,20 +281,19 @@ void Http2Upstream::http_handler(void *arg, HttpEventId what, void *data) {
         const HttpGoawayEvent *http_event = (HttpGoawayEvent *) data;
         log_upstream(upstream, dbg, "HTTP_EVENT_GOAWAY {}", http_event->error_code);
 
+        std::optional<VpnError> error;
         if (http_event->error_code != NGHTTP2_NO_ERROR) {
-            ServerError serv_event = {NON_ID};
             switch (http_event->error_code) {
             case HTTP_ERROR_AUTH_REQUIRED:
-                serv_event.error = {VPN_EC_AUTH_REQUIRED, HTTP_AUTH_REQUIRED_MSG};
+                error = {VPN_EC_AUTH_REQUIRED, HTTP_AUTH_REQUIRED_MSG};
                 break;
             default:
-                serv_event.error = {VPN_EC_ERROR, nghttp2_http2_strerror(http_event->error_code)};
+                error = {VPN_EC_ERROR, nghttp2_http2_strerror(http_event->error_code)};
                 break;
             }
-            upstream->handler.func(upstream->handler.arg, SERVER_EVENT_ERROR, &serv_event);
-        } else {
-            upstream->close_session_inner();
         }
+
+        upstream->close_session_inner(error);
 
         break;
     }
@@ -304,8 +303,7 @@ void Http2Upstream::http_handler(void *arg, HttpEventId what, void *data) {
 
         VpnError error = tcp_socket_write(upstream->m_socket.get(), http_event->data, http_event->length);
         if (error.code != 0) {
-            ServerError serv_event = {NON_ID, {VPN_EC_ERROR, error.text}};
-            upstream->handler.func(upstream->handler.arg, SERVER_EVENT_ERROR, &serv_event);
+            upstream->close_session_inner(VpnError{VPN_EC_ERROR, error.text});
         }
         break;
     }
@@ -316,7 +314,7 @@ int Http2Upstream::establish_http_session() {
     assert(m_session == nullptr);
 
     HttpSessionParams params = {
-            m_next_session_id++, {http_handler, this}, HTTP2_STREAM_INITIAL_WINDOW_SIZE, HTTP_VER_2_0};
+            uint64_t(this->id), {http_handler, this}, HTTP2_STREAM_INITIAL_WINDOW_SIZE, HTTP_VER_2_0};
     m_session.reset(http_session_open(&params));
 
     int r = 0;
@@ -344,8 +342,7 @@ void Http2Upstream::net_handler(void *arg, TcpSocketEvent what, void *data) {
         if (upstream->establish_http_session()) {
             upstream->handler.func(upstream->handler.arg, SERVER_EVENT_SESSION_OPENED, nullptr);
         } else {
-            ServerError serv_event = {NON_ID, {VPN_EC_ERROR, "Failed to initiate HTTP2 session"}};
-            upstream->handler.func(upstream->handler.arg, SERVER_EVENT_ERROR, &serv_event);
+            upstream->close_session_inner(VpnError{VPN_EC_ERROR, "Failed to initiate HTTP2 session"});
         }
 
         break;
@@ -355,7 +352,7 @@ void Http2Upstream::net_handler(void *arg, TcpSocketEvent what, void *data) {
 
         if (sock_event->length == 0) {
             log_upstream(upstream, dbg, "Got EOF from endpoint");
-            upstream->close_session_inner();
+            upstream->close_session_inner(std::nullopt);
         } else {
             log_upstream(upstream, trace, "Got {} bytes from endpoint", sock_event->length);
             int r = http_session_input(upstream->m_session.get(), sock_event->data, sock_event->length);
@@ -366,8 +363,7 @@ void Http2Upstream::net_handler(void *arg, TcpSocketEvent what, void *data) {
                 }
             } else {
                 log_upstream(upstream, err, "Failed to process HTTP data from server: {} ({})", nghttp2_strerror(r), r);
-                ServerError serv_event = {NON_ID, {VPN_EC_ERROR, nghttp2_strerror(r)}};
-                upstream->handler.func(upstream->handler.arg, SERVER_EVENT_ERROR, &serv_event);
+                upstream->close_session_inner(VpnError{VPN_EC_ERROR, nghttp2_strerror(r)});
             }
         }
         break;
@@ -383,8 +379,7 @@ void Http2Upstream::net_handler(void *arg, TcpSocketEvent what, void *data) {
         }
 
         log_upstream(upstream, dbg, "Error on HTTP session socket: {} ({})", sock_event->text, sock_event->code);
-        ServerError serv_event = {NON_ID, {VPN_EC_ERROR, sock_event->text}};
-        upstream->handler.func(upstream->handler.arg, SERVER_EVENT_ERROR, &serv_event);
+        upstream->close_session_inner(VpnError{VPN_EC_ERROR, sock_event->text});
 
         break;
     }
@@ -413,13 +408,14 @@ void Http2Upstream::net_handler(void *arg, TcpSocketEvent what, void *data) {
 
     upstream->m_in_handler = false;
 
-    if (upstream->m_closed) {
-        upstream->close_session_inner();
-        upstream->m_closed = false;
+    if (std::exchange(upstream->m_closed, false)) {
+        upstream->close_session_inner(std::exchange(upstream->m_pending_session_error, std::nullopt));
     }
 }
 
 bool Http2Upstream::open_session(std::optional<Millis> timeout) {
+    log_upstream(this, trace, "...");
+
     const vpn_client::EndpointConnectionConfig *config = &this->vpn->upstream_config;
 
     TcpSocketParameters sock_params = {
@@ -473,15 +469,21 @@ bool Http2Upstream::open_session(std::optional<Millis> timeout) {
     return error.code == 0;
 }
 
-void Http2Upstream::close_session_inner() {
+void Http2Upstream::close_session_inner(std::optional<VpnError> error) {
     if (m_in_handler) {
         m_closed = true;
+        m_pending_session_error = error;
         return;
     }
 
     close_session();
 
-    this->handler.func(this->handler.arg, SERVER_EVENT_SESSION_CLOSED, nullptr);
+    if (error.has_value()) {
+        ServerError event = {NON_ID, error.value()};
+        this->handler.func(this->handler.arg, SERVER_EVENT_ERROR, &event);
+    } else {
+        this->handler.func(this->handler.arg, SERVER_EVENT_SESSION_CLOSED, nullptr);
+    }
 }
 
 void Http2Upstream::close_session() {
