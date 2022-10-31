@@ -604,8 +604,8 @@ void VpnClient::handle_sleep() {
                 this->endpoint_connector->handle_sleep();
             } else {
                 log_client(this, warn, "Both upstream and connector are null");
-                return;
             }
+            return;
         }
         [[fallthrough]];
     case vpn_client::S_CONNECTED:
@@ -628,8 +628,8 @@ void VpnClient::handle_wake() {
                 this->endpoint_connector->handle_wake();
             } else {
                 log_client(this, warn, "Both upstream and connector are null");
-                return;
             }
+            return;
         }
         [[fallthrough]];
     case vpn_client::S_CONNECTED:
