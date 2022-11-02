@@ -1,3 +1,5 @@
+#include <cstdarg>
+#include <openssl/sha.h>
 #include <unordered_set>
 
 #include "common/utils.h"
@@ -5,7 +7,6 @@
 #include "vpn/guid_utils.h"
 
 #include <WS2tcpip.h>
-#include <cstdarg>
 #include <iphlpapi.h>
 #include <mstcpip.h>
 #include <winreg.h>
@@ -82,9 +83,24 @@ static bool initialize_wintun(HMODULE wintun) {
     return true;
 }
 
+static GUID uuid_v5(std::string_view uuid_namespace, std::string_view uuid_data) {
+    SHA_CTX ctx;
+    uint8_t hash[SHA_DIGEST_LENGTH];
+    SHA1_Init(&ctx);
+    SHA1_Update(&ctx, uuid_namespace.data(), uuid_namespace.size());
+    SHA1_Update(&ctx, uuid_data.data(), uuid_data.size());
+    SHA1_Final(hash, &ctx);
+    GUID guid;
+    memcpy(&guid, hash, sizeof(guid));
+    guid.Data3 = (guid.Data3 & 0x0FFF) | 0x5000;
+    return guid;
+}
+
 static WINTUN_ADAPTER_HANDLE create_wintun_adapter(std::string_view adapter_name) {
     wintun_quit_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    WINTUN_ADAPTER_HANDLE adapter = WintunCreateAdapter(ag::utils::to_wstring(adapter_name).data(), L"wintun", nullptr);
+    static const std::string_view GUID_NAMESPACE = "VpnLibsTunnels";
+    GUID guid = uuid_v5(GUID_NAMESPACE, adapter_name);
+    WINTUN_ADAPTER_HANDLE adapter = WintunCreateAdapter(ag::utils::to_wstring(adapter_name).data(), L"wintun", &guid);
     if (!adapter) {
         errlog(logger, "{}", ag::sys::strerror(ag::sys::last_error()));
         return nullptr;
