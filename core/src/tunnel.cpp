@@ -238,7 +238,7 @@ enum AfterLookuperAction {
 
 static AfterLookuperAction pass_through_lookuper(
         Tunnel *tunnel, VpnConnection *conn, DomainLookuperPacketDirection dir, const uint8_t *data, size_t length) {
-    DomainLookuper *lookuper = &((TcpVpnConnection *) conn)->domain_lookuper;
+    DomainLookuper *lookuper = &conn->domain_lookuper;
     DomainLookuperResult r;
     AfterLookuperAction action = ALUA_DONE;
     DomainFilter *filter = &tunnel->vpn->domain_filter;
@@ -377,10 +377,8 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
             break;
         }
         case CONNS_WAITING_RESPONSE_MIGRATING: {
-            auto *tcp_conn = (TcpVpnConnection *) conn;
-
             VpnConnection *src_conn =
-                    vpn_connection_get_by_id(this->connections.by_client_id, tcp_conn->migrating_client_id);
+                    vpn_connection_get_by_id(this->connections.by_client_id, conn->migrating_client_id);
             if (src_conn == nullptr) {
                 log_conn(this, conn, dbg, "Migrating connection closed while had being connecting to another upstream");
                 conn->upstream->close_connection(id, false, true);
@@ -388,8 +386,8 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
             }
 
             std::swap(conn->client_id, src_conn->client_id);
-            tcp_conn->state = CONNS_CONNECTED;
-            tcp_conn->migrating_client_id = NON_ID;
+            conn->state = CONNS_CONNECTED;
+            conn->migrating_client_id = NON_ID;
             add_connection(this, conn);
 
             src_conn->upstream->close_connection(src_conn->server_id, false, false);
@@ -550,7 +548,7 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
                     event->error.code);
 
             VpnConnection *src_conn = vpn_connection_get_by_id(
-                    this->connections.by_client_id, ((TcpVpnConnection *) conn)->migrating_client_id);
+                    this->connections.by_client_id, conn->migrating_client_id);
             if (src_conn != nullptr) {
                 src_conn->upstream->close_connection(src_conn->server_id, false, true);
             }
@@ -664,7 +662,7 @@ static void initiate_connection_migration(Tunnel *self, VpnConnection *conn, Ser
         return;
     }
 
-    auto *sw_conn = (TcpVpnConnection *) VpnConnection::make(NON_ID, conn->addr, conn->proto);
+    VpnConnection *sw_conn = VpnConnection::make(NON_ID, conn->addr, conn->proto);
     sw_conn->server_id = server_id;
     sw_conn->listener = conn->listener;
     sw_conn->upstream = upstream;

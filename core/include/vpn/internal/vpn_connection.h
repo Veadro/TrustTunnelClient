@@ -70,6 +70,8 @@ struct VpnConnection {
     int proto = 0;
     std::bitset<width_of<VpnConnectionFlags>()> flags;
     int uid = 0;
+    DomainLookuper domain_lookuper;
+    uint64_t migrating_client_id = NON_ID;
     std::string app_name;
     event_loop::AutoTaskId complete_connect_request_task;
     size_t incoming_bytes = 0;
@@ -99,8 +101,6 @@ private:
 };
 
 struct TcpVpnConnection : public VpnConnection {
-    DomainLookuper domain_lookuper;
-    uint64_t migrating_client_id = NON_ID;
 };
 
 } // namespace ag

@@ -286,6 +286,10 @@ loop_exit:
 }
 
 std::optional<quic_utils::QuicPacketHeader> quic_utils::parse_quic_header(U8View initial_packet) {
+    if (initial_packet.empty()) {
+        return std::nullopt;
+    }
+
     ag::quic_utils::QuicPacketHeader hd;
     // Extract data needed for decryption of initial packet
     int parsing_result = quiche_header_info(initial_packet.data(), initial_packet.size(), QUIC_MAX_CONN_ID_LEN,
