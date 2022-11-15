@@ -303,18 +303,17 @@ static DWORD get_physical_interfaces(std::unordered_set<NET_IFINDEX> &physical_i
     if (error = RegOpenKeyEx(HKEY_LOCAL_MACHINE, WINREG_NETWORK_CARDS_PATH.data(), 0, KEY_READ | KEY_ENUMERATE_SUB_KEYS,
                 &current_key); error == ERROR_SUCCESS) {
         DWORD key_index = 0;
-        DWORD name_length = BUFSIZ;
-        while (RegEnumKeyEx(current_key, key_index++, subkey, &name_length, nullptr, nullptr, nullptr, nullptr)
+        DWORD name_length;
+        while (RegEnumKeyEx(current_key, key_index++, subkey, &(name_length = std::size(subkey)), nullptr, nullptr, nullptr, nullptr)
                 != ERROR_NO_MORE_ITEMS) {
             DWORD data_size = 0;
             // get buffer size
             RegGetValueA(current_key, subkey, TEXT("ServiceName"), RRF_RT_REG_SZ, nullptr, nullptr, &data_size);
             std::string buffer;
             buffer.resize(data_size);
-            // get value
-            error = RegGetValueA(
+            auto get_value_result = RegGetValueA(
                     current_key, subkey, TEXT("ServiceName"), RRF_RT_REG_SZ, nullptr, buffer.data(), &data_size);
-            if (error == ERROR_SUCCESS) {
+            if (get_value_result == ERROR_SUCCESS) {
                 buffer.resize(data_size - 1);
                 if (auto guid = ag::string_to_guid(buffer); guid.has_value()) {
                     NET_LUID luid{};
@@ -323,6 +322,10 @@ static DWORD get_physical_interfaces(std::unordered_set<NET_IFINDEX> &physical_i
                     ConvertInterfaceLuidToIndex(&luid, &index);
                     physical_ifs.insert(index);
                 }
+            } else {
+                // Single error in previous operation is not critical for obtaining list of interfaces
+                dbglog(logger, "RegGetValueA failed for key index {} with result: {}", key_index - 1,
+                        ag::sys::strerror(get_value_result));
             }
         }
         RegCloseKey(current_key);
@@ -504,7 +507,7 @@ uint32_t ag::vpn_win_detect_active_if() {
     // first find physical network cards interfaces
     std::unordered_set<NET_IFINDEX> physical_ifs;
     DWORD error = get_physical_interfaces(physical_ifs);
-    if (error != ERROR_SUCCESS) {
+    if (physical_ifs.empty()) {
         SetLastError(error);
         errlog(logger, "get_physical_interfaces: {}", ag::sys::strerror(error));
         return 0;
