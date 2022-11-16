@@ -813,8 +813,8 @@ static size_t handle_udp_read(Socks5Listener *listener, Connection *conn, const 
     switch (conn->state) {
     case S5CONNS_IDLE:
         conn->state = S5CONNS_WAITING_CONNECT_RESULT;
-        raise_connect_request(listener, conn);
         pend_udp_packet(conn, data, length);
+        raise_connect_request(listener, conn);
         break;
     case S5CONNS_WAITING_ACCEPT:
     case S5CONNS_WAITING_REQUEST:
@@ -1187,15 +1187,15 @@ static void terminate_udp_association(Socks5Listener *listener, Connection *tcp_
 static void sock_handler(void *arg, TcpSocketEvent what, void *data) {
     SocketArg *info = (SocketArg *) arg;
     Socks5Listener *listener = info->listener;
+    uint32_t conn_id = info->id;
 
     if (what == TCP_SOCKET_EVENT_PROTECT) {
         listener->handler.func(listener->handler.arg, SOCKS5L_EVENT_PROTECT_SOCKET, data);
         return;
     }
 
-    khiter_t i = kh_get(connections_by_id, listener->connections, info->id);
+    khiter_t i = kh_get(connections_by_id, listener->connections, conn_id);
     if (i == kh_end(listener->connections)) {
-        free(arg);
         return;
     }
 
@@ -1407,8 +1407,10 @@ static void sock_handler(void *arg, TcpSocketEvent what, void *data) {
                 conn->state = S5CONNS_WAITING_CONNECT_RESULT;
                 conn->addr.src = remote_sockaddr_from_fd(tcp_socket_get_fd(conn->socket));
                 raise_connect_request(listener, conn);
-                tcp_socket_set_read_enabled(conn->socket, false);
-                log_conn(listener, conn->id, conn->proto, dbg, "Request processed, waiting for connect result");
+                if (kh_get(connections_by_id, listener->connections, conn_id) != kh_end(listener->connections)) {
+                    tcp_socket_set_read_enabled(conn->socket, false);
+                    log_conn(listener, conn->id, conn->proto, dbg, "Request processed, waiting for connect result");
+                }
             } else {
                 if (complete_udp_association(listener, conn)) {
                     conn->state = S5CONNS_ESTABLISHED;
