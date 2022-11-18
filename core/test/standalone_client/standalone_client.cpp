@@ -39,7 +39,10 @@
 #include "vpn/vpn.h"
 
 static constexpr std::string_view DEFAULT_CONFIG_FILE = "standalone_client.conf";
-[[maybe_unused]]static constexpr std::string_view WINTUN_DLL_NAME = "wintun";
+
+#ifdef _WIN32
+static constexpr std::string_view WINTUN_DLL_NAME = "wintun";
+#endif
 
 using namespace ag;
 
@@ -345,7 +348,7 @@ static void vpn_runner(ListenerType type) {
         g_wintun = LoadLibraryEx(WINTUN_DLL_NAME.data(), nullptr,
                 LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
         if (g_wintun == nullptr) {
-            errlog(g_logger, "wintun.dll from wintun-0.14.1.zip is not found in standalone_client directory");
+            errlog(g_logger, "Failed to load wintun: {}", ag::sys::strerror(GetLastError()));
             g_stop = true;
             return;
         }
@@ -360,7 +363,7 @@ static void vpn_runner(ListenerType type) {
                 AG_UNFILTERED_DNS_IPS_V6[1].data()
         };
         win_settings.dns_servers = {dns_servers, 4};
-        auto res = g_tunnel->init_win(&common_settings, &win_settings);
+        auto res = g_tunnel->init(&common_settings, &win_settings);
 #else
         auto res = g_tunnel->init(&common_settings);
 #endif

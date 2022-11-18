@@ -43,9 +43,12 @@ private:
     std::unordered_map<uint64_t, Connection> m_connections;
     ag::Logger m_log{"TUN_LISTENER"};
     VpnTunListenerConfig m_config;
+
+#ifdef _WIN32
     std::mutex m_recv_packets_queue_mutex;
     VpnPacketsHolder m_recv_packets_queue;
     event_loop::AutoTaskId m_recv_packets_task;
+#endif // _WIN32
 
     InitResult init(VpnClient *vpn, ClientHandler handler) override;
     void deinit() override;
@@ -60,7 +63,10 @@ private:
 
     static void tcpip_handler(void *arg, TcpipEvent id, void *data);
     static void complete_read(void *arg, TaskId task_id);
+
+#ifdef _WIN32
     static void recv_packets_handler(void *arg, VpnPackets *packets);
+#endif // _WIN32
 
     int read_out_pending_data(uint64_t id, Connection *conn) const;
 };

@@ -1,4 +1,7 @@
 #include "vpn/guid_utils.h"
+
+#include <openssl/rand.h>
+
 #include "common/utils.h"
 
 /// Placement of dashes in guid string format
@@ -59,5 +62,13 @@ std::optional<GUID> ag::string_to_guid(std::string_view guid_str) {
             guid_str.remove_prefix(1);
         }
     }
+    return guid;
+}
+
+GUID ag::random_guid() {
+    GUID guid{};
+    RAND_bytes((uint8_t *) &guid, sizeof(guid));
+    guid.Data3 = 0x40 | (guid.Data3 &0x0f);
+    guid.Data4[0] = 0x80 | (guid.Data4[0] & 0x3f);
     return guid;
 }

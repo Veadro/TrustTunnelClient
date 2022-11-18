@@ -21,4 +21,9 @@ std::string guid_to_string(const GUID &guid);
  */
 std::optional<GUID> string_to_guid(std::string_view guid_str);
 
+/**
+ * Return a new version 4 UUID.
+ */
+GUID random_guid();
+
 } // namespace ag

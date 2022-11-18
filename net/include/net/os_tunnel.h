@@ -3,14 +3,12 @@
 #include <event2/buffer.h>
 #include <span>
 
-#ifdef _WIN32
-#include "wintun.h"
-#else
-#define HMODULE void *
-#endif
-
 #include <common/cidr_range.h>
 #include <vpn/utils.h>
+
+#ifdef _WIN32
+#include <BaseTsd.h>
+#endif
 
 #ifdef __cplusplus
 namespace ag {
@@ -32,6 +30,7 @@ struct VpnOsTunnelSettings {
     int mtu;
 };
 
+#ifdef _WIN32
 struct VpnWinTunnelSettings {
     /** Adapter name */
     const char *adapter_name;
@@ -40,24 +39,28 @@ struct VpnWinTunnelSettings {
     /** Library module to handle tunnel */
     HMODULE wintun_lib;
 };
+#endif
 
 VpnOsTunnelSettings *vpn_os_tunnel_settings_clone(const VpnOsTunnelSettings *settings);
 void vpn_os_tunnel_settings_destroy(VpnOsTunnelSettings *settings);
 
+#ifdef _WIN32
 VpnWinTunnelSettings *vpn_win_tunnel_settings_clone(const VpnWinTunnelSettings *settings);
 void vpn_win_tunnel_settings_destroy(VpnWinTunnelSettings *settings);
+#endif
 
 /* Exported functions for Win32 CAPI */
 /**
  * Default settings for all tunnels
  */
 WIN_EXPORT const VpnOsTunnelSettings *vpn_os_tunnel_settings_defaults();
+
+#ifdef _WIN32
 /**
  * Additional default settings for Win tunnel. For common settings, see `vpn_os_tunnel_settings_defaults()`.
  */
 WIN_EXPORT const VpnWinTunnelSettings *vpn_win_tunnel_settings_defaults();
 
-#ifdef _WIN32
 /**
  * Create Wintun tunnel
  * @param settings Tunnel settings (common). See `vpn_os_tunnel_settings_defaults()` for recommended defaults.
@@ -96,28 +99,41 @@ WIN_EXPORT void vpn_win_set_bound_if(uint32_t if_index);
 
 class VpnOsTunnel {
 public:
-    /** Initialize tunnel */
-    virtual VpnError init(const VpnOsTunnelSettings *settings) {
-        return {-1, "Init of base tunnel class used"};
-    };
+#ifdef _WIN32
     /** Initialize tunnel with windows adapter settings */
-    virtual VpnError init_win(const VpnOsTunnelSettings *settings, const VpnWinTunnelSettings *win_settings) {
-        return {-1, "Init of base tunnel class used"};
-    };
+    virtual VpnError init(const VpnOsTunnelSettings *settings, const VpnWinTunnelSettings *win_settings) = 0;
+#else
+    /** Initialize tunnel */
+    virtual VpnError init(const VpnOsTunnelSettings *settings) = 0;
+#endif
+
     /** Stop and deinit tunnel */
-    virtual void deinit(){};
+    virtual void deinit() = 0;
+
     /** Get file descriptor */
-    virtual evutil_socket_t get_fd() {
-        return -1;
-    };
+    virtual evutil_socket_t get_fd() = 0;
+
+#ifdef _WIN32
+
     /** Start receiving packets */
-    virtual void start_recv_packets(void (*read_callback)(void *arg, VpnPackets *packets),
-                                    void *read_callback_arg){};
+    virtual void start_recv_packets(void (*read_callback)(void *arg, VpnPackets *packets), void *read_callback_arg) = 0;
+
     /** Stop receiving packets */
-    virtual void stop_recv_packets(){};
+    virtual void stop_recv_packets() = 0;
+
     /** Send packet */
-    virtual void send_packet(std::span<const evbuffer_iovec> chunks){};
+    virtual void send_packet(std::span<const evbuffer_iovec> chunks) = 0;
+
+#endif // _WIN32
+
+    VpnOsTunnel() = default;
     virtual ~VpnOsTunnel() = default;
+
+    VpnOsTunnel(const VpnOsTunnel &) = delete;
+    VpnOsTunnel &operator=(const VpnOsTunnel &) = delete;
+
+    VpnOsTunnel(VpnOsTunnel &&) = delete;
+    VpnOsTunnel &operator=(VpnOsTunnel &&) = delete;
 
 protected:
     void init_settings(const VpnOsTunnelSettings *settings) {
@@ -125,7 +141,7 @@ protected:
     }
     DeclPtr<VpnOsTunnelSettings, &vpn_os_tunnel_settings_destroy> m_settings;
     // Interface index
-    uint32_t m_if_index;
+    uint32_t m_if_index = 0;
 };
 
 #ifdef __linux__
@@ -166,35 +182,6 @@ protected:
 private:
     evutil_socket_t m_tun_fd{-1};
     std::string m_tun_name{};
-};
-#elif _WIN32
-
-class VpnWinTunnel : public VpnOsTunnel {
-public:
-    /** Initialize tunnel */
-    VpnError init_win(const VpnOsTunnelSettings *settings, const VpnWinTunnelSettings *win_settings) override;
-    /** Start receiving packets */
-    void start_recv_packets(void (*read_callback)(void *arg, VpnPackets *packets), void *read_callback_arg) override;
-    /** Stop receiving packets */
-    void stop_recv_packets() override;
-    /** Send packet */
-    void send_packet(std::span<const evbuffer_iovec> chunks) override;
-    /** Stop and deinit tunnel */
-    void deinit() override;
-    ~VpnWinTunnel() override;
-
-private:
-    void init_win_settings(const VpnWinTunnelSettings *win_settings) {
-        m_win_settings.reset(vpn_win_tunnel_settings_clone(win_settings));
-    }
-    bool setup_mtu();
-    bool setup_dns();
-    bool setup_routes();
-    DeclPtr<VpnWinTunnelSettings, &vpn_win_tunnel_settings_destroy> m_win_settings;
-
-    WINTUN_ADAPTER_HANDLE m_wintun_adapter{nullptr};
-    WINTUN_SESSION_HANDLE m_wintun_session{nullptr};
-    std::unique_ptr<std::thread> m_recv_thread_handle{};
 };
 #endif
 

@@ -12,6 +12,10 @@
 #define PCLOSE pclose
 #endif
 
+#ifdef _WIN32
+#include "os_tunnel_win.h"
+#endif
+
 static constexpr std::string_view DEFAULT_IPV4_ROUTE = "0.0.0.0/0";
 static constexpr std::string_view DEFAULT_IPV6_ROUTE = "::/0";
 static constexpr std::string_view DEFAULT_IPV6_ROUTE_UNICAST = "2000::/3";
@@ -146,6 +150,8 @@ const ag::VpnOsTunnelSettings *ag::vpn_os_tunnel_settings_defaults() {
     return &settings;
 }
 
+#ifdef _WIN32
+
 const ag::VpnWinTunnelSettings *ag::vpn_win_tunnel_settings_defaults() {
     static const char *dns_server = AG_UNFILTERED_DNS_IPS_V4[0].data();
     static const ag::VpnWinTunnelSettings win_settings = {
@@ -179,6 +185,8 @@ void ag::vpn_win_tunnel_settings_destroy(ag::VpnWinTunnelSettings *settings) {
     delete[] settings->dns_servers.data;
     delete settings;
 }
+
+#endif // _WIN32
 
 std::unique_ptr<ag::VpnOsTunnel> ag::make_vpn_tunnel() {
 #ifdef _WIN32

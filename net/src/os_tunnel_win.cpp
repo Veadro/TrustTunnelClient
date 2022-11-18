@@ -1,3 +1,5 @@
+#include "os_tunnel_win.h"
+
 #include <cstdarg>
 #include <openssl/sha.h>
 #include <unordered_set>
@@ -37,7 +39,7 @@ static WINTUN_SEND_PACKET_FUNC *WintunSendPacket;
 
 static const ag::Logger logger("OS_TUNNEL_WIN");
 
-static HANDLE wintun_quit_event;
+static HANDLE wintun_quit_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 
 static std::atomic<uint32_t> g_win_bound_if = 0;
 
@@ -99,13 +101,16 @@ static GUID uuid_v5(std::string_view uuid_namespace, std::string_view uuid_data)
 }
 
 static WINTUN_ADAPTER_HANDLE create_wintun_adapter(std::string_view adapter_name) {
-    wintun_quit_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    static const std::string_view GUID_NAMESPACE = "VpnLibsTunnels";
-    GUID guid = uuid_v5(GUID_NAMESPACE, adapter_name);
-    WINTUN_ADAPTER_HANDLE adapter = WintunCreateAdapter(ag::utils::to_wstring(adapter_name).data(), L"wintun", &guid);
+    std::wstring wname = ag::utils::to_wstring(adapter_name);
+    WINTUN_ADAPTER_HANDLE adapter = WintunOpenAdapter(wname.data());
     if (!adapter) {
-        errlog(logger, "{}", ag::sys::strerror(ag::sys::last_error()));
-        return nullptr;
+        dbglog(logger, "WintunOpenAdapter: {}", ag::sys::strerror(ag::sys::last_error()));
+        GUID guid = uuid_v5("VpnLibsTunnels", adapter_name);
+        adapter = WintunCreateAdapter(wname.data(), L"wintun", &guid);
+        if (!adapter) {
+            errlog(logger, "WintunCreateAdapter: {}", ag::sys::strerror(ag::sys::last_error()));
+            return nullptr;
+        }
     }
     return adapter;
 }
@@ -223,7 +228,7 @@ static void close_wintun(WINTUN_SESSION_HANDLE session, WINTUN_ADAPTER_HANDLE ad
     }
 }
 
-ag::VpnError ag::VpnWinTunnel::init_win(
+ag::VpnError ag::VpnWinTunnel::init(
         const ag::VpnOsTunnelSettings *settings, const ag::VpnWinTunnelSettings *win_settings) {
     init_settings(settings);
     init_win_settings(win_settings);
@@ -408,6 +413,26 @@ bool ag::VpnWinTunnel::setup_dns() {
         SetLastError(error);
         return false;
     }
+
+    std::vector<sockaddr_storage> dns_servers;
+    dns_servers.reserve(m_win_settings->dns_servers.size);
+    std::transform(m_win_settings->dns_servers.data,
+            m_win_settings->dns_servers.data + m_win_settings->dns_servers.size, std::back_inserter(dns_servers),
+            [](const char *str) {
+                return sockaddr_from_str(str);
+            });
+    std::vector<sockaddr *> dns_servers0;
+    dns_servers0.reserve(dns_servers.size());
+    std::transform(dns_servers.begin(), dns_servers.end(), std::back_inserter(dns_servers0),
+            [](const sockaddr_storage &address) {
+                return (sockaddr *) &address;
+            });
+
+    if (auto error = m_firewall.restrict_dns_to({dns_servers0.begin(), dns_servers0.end()})) {
+        errlog(logger, "Failed to restrict DNS traffic: {}", error->str());
+        return false;
+    }
+
     return true;
 }
 
@@ -464,6 +489,10 @@ void ag::VpnWinTunnel::deinit() {
     m_wintun_adapter = nullptr;
 }
 
+evutil_socket_t ag::VpnWinTunnel::get_fd() {
+    return EVUTIL_INVALID_SOCKET;
+}
+
 void ag::VpnWinTunnel::start_recv_packets(
         void (*read_callback)(void *arg, VpnPackets *packets), void *read_callback_arg) {
     std::unique_ptr<WintunThreadParams> pass_params(
@@ -490,7 +519,7 @@ ag::VpnWinTunnel::~VpnWinTunnel() {
 
 void *ag::vpn_win_tunnel_create(ag::VpnOsTunnelSettings *settings, ag::VpnWinTunnelSettings *win_settings) {
     auto *tunnel = new ag::VpnWinTunnel{};
-    auto res = tunnel->init_win(settings, win_settings);
+    auto res = tunnel->init(settings, win_settings);
     if (res.code != 0) {
         dbglog(logger, "Error initializing tunnel: {}", res.text ? res.text : "(null)");
         delete tunnel;

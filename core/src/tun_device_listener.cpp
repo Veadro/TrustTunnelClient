@@ -82,14 +82,18 @@ ClientListener::InitResult TunListener::init(VpnClient *vpn, ClientHandler handl
         deinit();
         return InitResult::FAILURE;
     }
+
+#ifdef _WIN32
     if (m_config.tunnel) {
         m_config.tunnel->start_recv_packets(recv_packets_handler, this);
     }
+#endif // _WIN32
 
     return InitResult::SUCCESS;
 }
 
 void TunListener::deinit() {
+#ifdef _WIN32
     if (m_config.tunnel) {
         m_config.tunnel->stop_recv_packets();
         std::unique_lock l(m_recv_packets_queue_mutex);
@@ -98,6 +102,7 @@ void TunListener::deinit() {
             m_recv_packets_task.reset();
         }
     }
+#endif // _WIN32
     tcpip_close(m_tcpip);
     m_tcpip = nullptr;
 }
@@ -253,10 +258,13 @@ void TunListener::tcpip_handler(void *arg, TcpipEvent what, void *data) {
     }
     case TCPIP_EVENT_TUN_OUTPUT: {
         const auto *tcpip_event = (TcpipTunOutputEvent *) data;
+
+#ifdef _WIN32
         if (listener->m_config.tunnel) {
             listener->m_config.tunnel->send_packet({tcpip_event->packet.chunks, tcpip_event->packet.chunks_num});
             break;
         }
+#endif
 
         VpnClientOutputEvent vpn_event = {
                 .family = tcpip_event->family,
@@ -390,6 +398,7 @@ void TunListener::process_icmp_reply(const IcmpEchoReply &reply) {
     tcpip_process_icmp_echo_reply(m_tcpip, &reply);
 }
 
+#ifdef _WIN32
 void TunListener::recv_packets_handler(void *arg, VpnPackets *packets){
     auto *listener = (TunListener *) arg;
     std::unique_lock l(listener->m_recv_packets_queue_mutex);
@@ -414,5 +423,6 @@ void TunListener::recv_packets_handler(void *arg, VpnPackets *packets){
         tracelog(listener->m_log, "Scheduled new recv_packets task");
     }
 }
+#endif // _WIN32
 
 } // namespace ag

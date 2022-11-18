@@ -42,6 +42,7 @@ if(APPLE AND OSX_SYSROOT_LC MATCHES "/macosx([0-9]+\.)+sdk$")
     list(APPEND SOURCE_FILES ${NET_SOURCE_DIR}/os_tunnel_mac.cpp)
 elseif(WIN32)
     list(APPEND SOURCE_FILES ${NET_SOURCE_DIR}/os_tunnel_win.cpp)
+    list(APPEND SOURCE_FILES ${NET_SOURCE_DIR}/wfp_firewall.cpp)
 elseif(CMAKE_SYSTEM_NAME STREQUAL Linux)
     list(APPEND SOURCE_FILES ${NET_SOURCE_DIR}/os_tunnel_linux.cpp)
 endif()
@@ -66,6 +67,7 @@ target_link_libraries(vpnlibs_net CONAN_PKG::ldns CONAN_PKG::nghttp2 CONAN_PKG::
 target_link_libraries(vpnlibs_net CONAN_PKG::libevent CONAN_PKG::quiche CONAN_PKG::magic_enum)
 if (WIN32)
     target_link_libraries(vpnlibs_net BCrypt) # Quiche requirement
+    target_link_libraries(vpnlibs_net Fwpuclnt) # WFP firewall
 endif()
 
 if (APPLE)
