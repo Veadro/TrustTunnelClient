@@ -38,6 +38,8 @@ struct VpnWinTunnelSettings {
     VpnAddressArray dns_servers;
     /** Library module to handle tunnel */
     HMODULE wintun_lib;
+    /** Block all inbound/outbound IPv6 traffic */
+    bool block_ipv6;
 };
 #endif
 

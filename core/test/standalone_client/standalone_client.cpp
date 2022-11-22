@@ -22,6 +22,7 @@
 #include <csignal>
 #include <fstream>
 #include <unordered_map>
+#include <vector>
 
 #define CXXOPTS_NO_RTTI
 #include <cxxopts.hpp>
@@ -107,7 +108,7 @@ static std::optional<std::string> read_file_to_str(const std::string &filename) 
 
 struct Params {
     std::string hostname;
-    std::string address;
+    std::vector<std::string> addresses;
     std::string username;
     std::string password;
     std::string listener_pass;
@@ -154,7 +155,10 @@ struct Params {
 
     void parse_server_info(nlohmann::json::reference &server_info) {
         hostname = server_info["hostname"];
-        address = server_info["address"];
+        auto json_addrs = server_info["addresses"];
+        addresses.reserve(json_addrs.size());
+        std::transform(json_addrs.begin(), json_addrs.end(), std::back_inserter(addresses),
+                [](auto &json_addr) { return (std::string) json_addr; });
         username = server_info["username"];
         password = server_info["password"];
         skip_verify = server_info["skip_cert_verify"];
@@ -247,7 +251,7 @@ struct Params {
 static DeclPtr<VpnEventLoop, &vpn_event_loop_destroy> g_extra_loop{nullptr};
 static VpnSettings g_vpn_settings = {{vpn_handler, nullptr}, {}};
 static VpnUpstreamConfig g_vpn_server_config;
-static VpnEndpoint g_endpoint;
+static std::vector<VpnEndpoint> g_endpoints;
 static VpnListenerConfig g_vpn_common_listener_config;
 static VpnTunListenerConfig g_vpn_tun_listener_config;
 static VpnSocksListenerConfig g_vpn_socks_listener_config;
@@ -317,8 +321,6 @@ static void vpn_runner(ListenerType type) {
         VpnOsTunnelSettings common_settings{};
         const auto *defaults = vpn_os_tunnel_settings_defaults();
         // append endpoint address to excluded routes
-        auto [host_view, port_view] = ag::utils::split_host_port(g_params.address.c_str());
-        std::string addr(host_view.data(), host_view.size());
         std::string ipv4_address = "172.16.218.0";
         std::string ipv6_address = "fd00::0";
         common_settings.ipv4_address = ipv4_address.c_str();
@@ -334,7 +336,13 @@ static void vpn_runner(ListenerType type) {
         for (auto &route : g_params.excluded_routes) {
             excluded_routes.emplace_back(route.c_str());
         }
-        excluded_routes.emplace_back(addr.c_str());
+
+        for (const std::string &address : g_params.addresses) {
+            auto [host_view, port_view] = ag::utils::split_host_port(address.c_str());
+            std::string addr(host_view.data(), host_view.size());
+            excluded_routes.emplace_back(addr.c_str());
+        }
+
         common_settings.excluded_routes.data = excluded_routes.data();
         common_settings.excluded_routes.size = excluded_routes.size();
         g_tunnel = ag::make_vpn_tunnel();
@@ -542,9 +550,14 @@ void apply_vpn_settings() {
     g_vpn_settings.exclusions = {g_params.exclusions.data(), (uint32_t) g_params.exclusions.size()};
     g_vpn_settings.mode = g_params.mode;
 
-    g_endpoint.address = sockaddr_from_str(g_params.address.c_str());
-    g_endpoint.name = g_params.hostname.c_str();
-    g_vpn_server_config.location = {"1", {&g_endpoint, 1}};
+    g_endpoints.reserve(g_params.addresses.size());
+    for (const std::string &address : g_params.addresses) {
+        g_endpoints.emplace_back(VpnEndpoint{
+                .address = sockaddr_from_str(address.c_str()),
+                .name = g_params.hostname.c_str(),
+        });
+    }
+    g_vpn_server_config.location = {"test-location", {g_endpoints.data(), uint32_t(g_endpoints.size())}};
     g_vpn_server_config.username = g_params.username.c_str();
     g_vpn_server_config.password = g_params.password.c_str();
     g_vpn_server_config.protocol.type = g_params.upstream_protocol;

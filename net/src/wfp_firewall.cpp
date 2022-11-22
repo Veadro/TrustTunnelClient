@@ -12,6 +12,13 @@
 
 static ag::Logger g_log{"FIREWALL"}; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
+static constexpr uint8_t DNS_RESTRICT_DENY_WEIGHT = 13;
+static constexpr uint8_t DNS_RESTRICT_ALLOW_WEIGHT = 14;
+static constexpr uint8_t IPV6_BLOCK_DENY_WEIGHT = 15;
+
+static_assert(IPV6_BLOCK_DENY_WEIGHT > DNS_RESTRICT_ALLOW_WEIGHT);
+static_assert(DNS_RESTRICT_ALLOW_WEIGHT > DNS_RESTRICT_DENY_WEIGHT);
+
 template <typename Func>
 ag::WfpFirewallError run_transaction(HANDLE engine_handle, Func &&func) {
     if (DWORD error = FwpmTransactionBegin0(engine_handle, 0); error != ERROR_SUCCESS) {
@@ -99,9 +106,6 @@ ag::WfpFirewallError ag::WfpFirewall::restrict_dns_to(std::basic_string_view<soc
         return make_error(FE_NOT_INITIALIZED);
     }
     return run_transaction(m_impl->engine_handle, [&]() -> WfpFirewallError {
-        static constexpr uint8_t DENY_WEIGHT = 14;
-        static constexpr uint8_t ALLOW_WEIGHT = 15;
-
         FWPM_FILTER_CONDITION0 deny_conditions[] = {
                 {
                         .fieldKey = FWPM_CONDITION_IP_REMOTE_PORT,
@@ -143,7 +147,7 @@ ag::WfpFirewallError ag::WfpFirewall::restrict_dns_to(std::basic_string_view<soc
                 .weight =
                         {
                                 .type = FWP_UINT8,
-                                .uint8 = DENY_WEIGHT,
+                                .uint8 = DNS_RESTRICT_DENY_WEIGHT,
                         },
                 .numFilterConditions = std::size(deny_conditions),
                 .filterCondition = &deny_conditions[0],
@@ -164,7 +168,7 @@ ag::WfpFirewallError ag::WfpFirewall::restrict_dns_to(std::basic_string_view<soc
         }
 
         filter.action = {.type = FWP_ACTION_PERMIT};
-        filter.weight.uint8 = ALLOW_WEIGHT;
+        filter.weight.uint8 = DNS_RESTRICT_ALLOW_WEIGHT;
 
         // Allow IPv4 inbound/outbound DNS traffic for specified addresses.
         std::vector<FWPM_FILTER_CONDITION0> allow_v4_conditions;
@@ -230,6 +234,45 @@ ag::WfpFirewallError ag::WfpFirewall::restrict_dns_to(std::basic_string_view<soc
                         error != ERROR_SUCCESS) {
                     return make_error(FE_WFP_ERROR, AG_FMT("FwpmFilterAdd0 failed with code {:#x}", error));
                 }
+            }
+        }
+
+        return nullptr;
+    });
+}
+
+ag::WfpFirewallError ag::WfpFirewall::block_ipv6() {
+    if (m_impl->engine_handle == INVALID_HANDLE_VALUE) {
+        return make_error(FE_NOT_INITIALIZED);
+    }
+    return run_transaction(m_impl->engine_handle, [&]() -> WfpFirewallError {
+        std::wstring name = L"AdGuard VPN block IPv6";
+        FWPM_FILTER0 filter{
+                .displayData =
+                        {
+                                .name = name.data(),
+                        },
+                .providerKey = &m_impl->provider_key,
+                .subLayerKey = m_impl->sublayer_key,
+                .weight =
+                        {
+                                .type = FWP_UINT8,
+                                .uint8 = IPV6_BLOCK_DENY_WEIGHT,
+                        },
+                .numFilterConditions = 0,
+                .filterCondition = nullptr,
+                .action =
+                        {
+                                .type = FWP_ACTION_BLOCK,
+                        },
+        };
+
+        // Block all inbound/outbound IPv6 traffic.
+        for (GUID layer_key : {FWPM_LAYER_ALE_AUTH_CONNECT_V6, FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6}) {
+            filter.layerKey = layer_key;
+            if (DWORD error = FwpmFilterAdd0(m_impl->engine_handle, &filter, nullptr, nullptr);
+                    error != ERROR_SUCCESS) {
+                return make_error(FE_WFP_ERROR, AG_FMT("FwpmFilterAdd0 failed with code {:#x}", error));
             }
         }
 

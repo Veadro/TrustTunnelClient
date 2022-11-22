@@ -42,6 +42,9 @@ public:
     /** Block DNS traffic to/from all addresses except `allowed`. */
     WfpFirewallError restrict_dns_to(std::basic_string_view<sockaddr *> allowed);
 
+    /** Block all inbound/outbound IPv6 traffic. */
+    WfpFirewallError block_ipv6();
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;

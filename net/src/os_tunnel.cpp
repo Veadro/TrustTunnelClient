@@ -158,19 +158,19 @@ const ag::VpnWinTunnelSettings *ag::vpn_win_tunnel_settings_defaults() {
             .adapter_name = "Adguard VpnLibs test tunnel",
             .dns_servers = {&dns_server, 1}, // Adguard DNS unfiltered
             .wintun_lib = nullptr,
+            .block_ipv6 = false,
     };
     return &win_settings;
 }
 
 ag::VpnWinTunnelSettings *ag::vpn_win_tunnel_settings_clone(const ag::VpnWinTunnelSettings *settings) {
-    VpnWinTunnelSettings *dst = new VpnWinTunnelSettings{};
+    auto *dst = new VpnWinTunnelSettings{};
+    *dst = *settings;
     dst->adapter_name = safe_strdup(settings->adapter_name);
-    dst->dns_servers.size = settings->dns_servers.size;
     dst->dns_servers.data = new const char *[dst->dns_servers.size];
     for (size_t i = 0; i != dst->dns_servers.size; i++) {
         dst->dns_servers.data[i] = safe_strdup(settings->dns_servers.data[i]);
     }
-    dst->wintun_lib = settings->wintun_lib;
     return dst;
 }
 

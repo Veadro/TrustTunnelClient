@@ -234,12 +234,12 @@ static VpnError validate_upstream_config(const Vpn *vpn, const VpnUpstreamConfig
     for (size_t i = 0; i < config->location.endpoints.size; ++i) {
         const VpnEndpoint *i_ep = &config->location.endpoints.data[i];
         if (i_ep->name == nullptr) {
-            log_vpn(vpn, err, "Invalid endpoint's address='{}'", sockaddr_to_str((sockaddr *) &i_ep->address));
+            log_vpn(vpn, err, "No hostname for endpoint '{}'", sockaddr_to_str((sockaddr *) &i_ep->address));
             return {VPN_EC_INVALID_SETTINGS, "Names must be specified for each endpoint"};
         }
 
         if (config->location.endpoints.size > 1 && i_ep->address.ss_family == AF_UNSPEC) {
-            log_vpn(vpn, err, "Invalid endpoint's name='{}'", i_ep->name);
+            log_vpn(vpn, err, "No address for endpoint '{}'", i_ep->name);
             return {VPN_EC_INVALID_SETTINGS, "In case of multiple endpoints addresses must be specified for each one"};
         }
 

@@ -255,6 +255,12 @@ ag::VpnError ag::VpnWinTunnel::init(
         errlog(logger, "{}", ag::sys::strerror(ag::sys::last_error()));
         return {-1, "Unable to set dns for wintun session"};
     }
+    if (m_win_settings->block_ipv6) {
+        if (auto error = m_firewall.block_ipv6()) {
+            errlog(logger, "Failed to block IPv6: {}", error->str());
+            return {-1, "Failed to block IPv6"};
+        }
+    }
     if (!setup_routes()) {
         errlog(logger, "{}", ag::sys::strerror(ag::sys::last_error()));
         return {-1, "Unable to setup routes for wintun session"};
