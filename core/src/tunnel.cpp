@@ -1052,6 +1052,12 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
                 sockaddr_to_str(client_event->src), tunnel_addr_to_str(client_event->dst), client_event->protocol);
 
         add_connection(this, conn);
+        if (const sockaddr_storage *addr = std::get_if<sockaddr_storage>(client_event->dst)) {
+            if ((ag::sockaddr_is_loopback((sockaddr *) addr)) || (ag::sockaddr_is_private((sockaddr *) addr))) {
+                this->complete_connect_request(conn->client_id, VPN_CA_FORCE_BYPASS);
+                return;
+            }
+        }
 
         if (listener == this->dns_resolver.get()) {
             if (this->endpoint_upstream_connected) {

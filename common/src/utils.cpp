@@ -11,6 +11,12 @@
 
 namespace ag {
 
+#ifndef IN6_IS_ADDR_UNIQUE_LOCAL
+inline bool IN6_IS_ADDR_UNIQUE_LOCAL(const struct in6_addr *addr) {
+    return ((addr->s6_addr[0] == 0xfc) || (addr->s6_addr[0] == 0xfd));
+}
+#endif
+
 size_t sockaddr_get_size(const struct sockaddr *addr) {
     switch (addr->sa_family) {
     case AF_INET:
@@ -37,10 +43,24 @@ bool sockaddr_is_any(const struct sockaddr *addr) {
 bool sockaddr_is_loopback(const struct sockaddr *addr) {
     switch (addr->sa_family) {
     case AF_INET:
-        return htonl(INADDR_LOOPBACK) == ((struct sockaddr_in *) addr)->sin_addr.s_addr;
+        return (INADDR_LOOPBACK & 0xff000000) == (ntohl(((struct sockaddr_in *) addr)->sin_addr.s_addr) & 0xff000000);
     case AF_INET6:
         // in6addr_loopback is already in network order
         return 0 == memcmp(&((struct sockaddr_in6 *) addr)->sin6_addr, &in6addr_loopback, sizeof(in6addr_loopback));
+    default:
+        return false;
+    }
+}
+
+bool sockaddr_is_private(const struct sockaddr *addr) {
+    switch (addr->sa_family) {
+    case AF_INET:
+        return (((ntohl(((sockaddr_in *) addr)->sin_addr.s_addr) & 0xff000000) == 0x0a000000)      // 10.0.0.0/8
+                || ((ntohl(((sockaddr_in *) addr)->sin_addr.s_addr) & 0xfff00000) == 0xac100000)   // 172.16.0.0/12
+                || ((ntohl(((sockaddr_in *) addr)->sin_addr.s_addr) & 0xffff0000) == 0xc0a80000)); // 192.168.0.0/16
+    case AF_INET6:
+        return (IN6_IS_ADDR_LINKLOCAL(&((struct sockaddr_in6 *) addr)->sin6_addr)         // fe80::/10
+                || IN6_IS_ADDR_UNIQUE_LOCAL(&((struct sockaddr_in6 *) addr)->sin6_addr)); // fc00::/7
     default:
         return false;
     }

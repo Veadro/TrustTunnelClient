@@ -199,7 +199,7 @@ public:
         TestListener::g_next_connection_id = 0;
 
         src = sockaddr_from_str("1.1.1.1:1000");
-        dst = sockaddr_from_str("127.0.0.1:443");
+        dst = sockaddr_from_str("1.1.1.2:443");
 
         vpn.parameters.handler = {&vpn_handler, this};
 
@@ -249,6 +249,14 @@ TEST_F(TunnelTest, IPv6Unavailable) {
     ASSERT_EQ(redirect_upstream->connections.size(), 0);
     ASSERT_NE(client_listener->connections.count(client_id), 0);
     ASSERT_EQ(client_listener->connections[client_id].result, CCR_UNREACH);
+}
+
+TEST_F(TunnelTest, LocalhostConnection) {
+    size_t client_id = TestListener::g_next_connection_id++;
+    dst = sockaddr_from_str("127.0.0.1:443");
+    ClientConnectRequest event = {client_id, connection_protocol, (sockaddr *) &src, &dst};
+    tun.listener_handler(client_listener, CLIENT_EVENT_CONNECT_REQUEST, &event);
+    ASSERT_GT(bypass_upstream->connections.size(), 0);
 }
 
 class MigrationTest : public TunnelTest {
@@ -433,7 +441,7 @@ public:
 
         static constexpr uint8_t DNS_REPLY[] = {0x21, 0xfd, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
                 0x09, 0x6c, 0x6f, 0x63, 0x61, 0x6c, 0x68, 0x6f, 0x73, 0x74, 0x00, 0x00, 0x01, 0x00, 0x01, 0xc0, 0x0c,
-                0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, ANSWER_TTL_SEC, 0x00, 0x04, 0x7f, 0x00, 0x00, 0x01, 0x00,
+                0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, ANSWER_TTL_SEC, 0x00, 0x04, 0x01, 0x01, 0x01, 0x02, 0x00,
                 0x00, 0x29, 0xff, 0xd6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
         ServerReadEvent upstream_read_event = {upstream_conn_id, DNS_REPLY, std::size(DNS_REPLY), 0};
@@ -483,7 +491,7 @@ TEST_F(FakeConnectionTest, NonscannablePort) {
     client_id = TestListener::g_next_connection_id++;
 
     // 1) Raise the request for connection
-    dst = sockaddr_from_str("127.0.0.1:777");
+    dst = sockaddr_from_str("1.1.1.2:777");
     ASSERT_NO_FATAL_FAILURE(raise_client_connection(client_id));
 
     // 2) Establish the connection through VPN endpoint
