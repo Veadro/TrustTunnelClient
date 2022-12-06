@@ -11,7 +11,7 @@ namespace ag::quic_utils {
 /// maximum length of a connection ID
 static constexpr size_t QUIC_MAX_CONN_ID_LEN = 20;
 /// maximum token length, don't process too large token
-static constexpr size_t QUIC_MAX_TOKEN_LEN = 64;
+static constexpr size_t QUIC_MAX_TOKEN_LEN = 128;
 /// default port for QUIC traffic
 static constexpr size_t DEFAULT_QUIC_PORT = 443;
 /**

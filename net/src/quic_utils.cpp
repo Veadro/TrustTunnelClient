@@ -89,6 +89,7 @@ static bool decrypt_quic_payload(uint8_t *dest, const uint8_t *payload_key, cons
         size_t *max_overhead) {
     const EVP_AEAD *cipher = EVP_aead_aes_128_gcm_tls13();
     size_t keylen = EVP_AEAD_key_length(cipher);
+    uint8_t nonce_len = EVP_AEAD_nonce_length(cipher);
 
     DeclPtr<EVP_AEAD_CTX, &EVP_AEAD_CTX_free> actx{
             EVP_AEAD_CTX_new(cipher, payload_key, keylen, EVP_AEAD_DEFAULT_TAG_LENGTH)};
@@ -98,7 +99,7 @@ static bool decrypt_quic_payload(uint8_t *dest, const uint8_t *payload_key, cons
     size_t max_outlen = ciphertext_len;
     size_t outlen = 0;
 
-    if (EVP_AEAD_CTX_open(actx.get(), dest, &outlen, max_outlen, nonce, QUIC_INITIAL_IVLEN, ciphertext, ciphertext_len,
+    if (EVP_AEAD_CTX_open(actx.get(), dest, &outlen, max_outlen, nonce, nonce_len, ciphertext, ciphertext_len,
                 associated_data, associated_data_len)
             != 1) {
         return false;
@@ -111,6 +112,9 @@ static bool decrypt_quic_payload(uint8_t *dest, const uint8_t *payload_key, cons
 std::optional<std::vector<uint8_t>> quic_utils::decrypt_initial(
         U8View initial_packet, const quic_utils::QuicPacketHeader &hd) {
 
+    if (initial_packet.size() < QUICHE_MIN_CLIENT_INITIAL_LEN) {
+        return std::nullopt;
+    }
     const auto *initial_salt_it = std::find_if(
             std::begin(QUIC_INITIAL_SALTS), std::end(QUIC_INITIAL_SALTS), [&](const QuicInitialSalt &salt) {
                 return hd.version >= salt.version;
@@ -184,7 +188,7 @@ std::optional<std::vector<uint8_t>> quic_utils::decrypt_initial(
     size_t payload_len = decrypted_packet.size() - payload_offset;
     size_t max_overhead = 0;
     if (!decrypt_quic_payload(decrypted_packet.data() + payload_offset, payload_key.data(),
-                decrypted_packet.data() + payload_offset, payload_len, payload_iv.data(), decrypted_packet.data(),
+                initial_packet.data() + payload_offset, payload_len, payload_iv.data(), decrypted_packet.data(),
                 payload_offset, &max_overhead)) {
         return std::nullopt;
     }
@@ -279,7 +283,11 @@ std::optional<std::vector<uint8_t>> quic_utils::reassemble_initial_crypto_frames
         }
     }
 loop_exit:
-    for (auto &[_, data] : fragments) {
+    // no crypto frames were found
+    if (fragments.empty()) {
+        return std::nullopt;
+    }
+    for (const auto &[_, data] : fragments) {
         ret.insert(ret.end(), data.begin(), data.end());
     }
     return ret;

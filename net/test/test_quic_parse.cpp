@@ -159,7 +159,59 @@ TEST(QuicUtilsTest, ExtractClientHello) {
                             "5f17e869fa064dde2cbc9f38e58a0116a9b148b6ef56796d72e1994d1bfc1060"
                             "44d00d350ffb602fc");
 
-    for (auto *p : {&draft28_pkt, &draft34_pkt, &google_mangled_pkt}) {
+    std::vector<uint8_t> vk_packet = decode_from_hex(
+            "ca0000000114f5acaf8f2893d252a7d967f54a867553a40dbfd90040407371b946905c69549c84e93e8de0e3bc64752b580a87303f"
+            "545719c1ef3153e42a7a7f6c4115e241f62ebc739cce85082a9f0fcefdd8e45a33fe7aceb8dd6de6448354baf2bc20834b941cf12d"
+            "8c33ca60c2682719aca2db4d0be217a7846441d910cf04c82d664f4a9d15bc354769466036f5bc9a5dc53abb425edf3001e6f8a979"
+            "1e4cd0375d9d693ef32d7227c1b2447558b45cf81d18e32bf5e8588274cb172ea39f88b350e6d0b2a6446d12049e991c144190ab56"
+            "e81920b3236ed519c81b7c2f9eb02c058d43d609e6dac6ed7d074faac82599e83181caaa5c29f3fae4b76520a1c99899bb9b117e19"
+            "9217ef5744c1e7a0c03e0e05a88b939d965492ca964b35799eab89669273c989feca1d3abe837a84a2ba78b9ab85f99b50b92cbc8b"
+            "e17af5933e12b7e367304039c6c06312036e29ccf67e97b913cb63253c5e15e2766a700f3ba34f1a8fd9af8c8228dcfd5b0da4c582"
+            "7042d612b9e30307f37aaab5506c3d4d9440fa9827b8a8759a35248838cfb130bdfd5f7efef1ae46ddd22207ca2714807c30a1b208"
+            "c980b7fe5dc192751a6d9dfa40dcafe573b89907c4a8235502b98ad70157f0a494bed6c424bce8421090b82f4faa5c8533a4c5f6f5"
+            "cfda1bd749dba499915284106b39e8f2251c8be42f4ba7926c8f20901d9e329755d4be9582317dbe514b09b1eb8382b702be94462b"
+            "506592dcff43b79d09d2f62117013f15a0f8226e9e092679607de92a9d9b801eb270ffefd35ea370ef3e7b34215e730614e7b81950"
+            "1def26c61f0b51a837f955e267e31afa4105aa4a1b257dea346d3dc1f1bdfe1afcfcd7a97ff2d1ac2ed2c9026746154668ac9740a0"
+            "bd9bc1c04b68efb6a5ceb181b3b3f7e7de1a13bc2e16c45ad7f01531cc0670bc00ac78a88bce9698c871f7b673f24dd67839d629c6"
+            "a2e73025e37a0b238936330763ab304731a6e28a4b89e8117a9f383d55efedb3f6a0786e8fb1f94457e57aaea631c7a71b58180f79"
+            "e45aa838ed0cbea402a4417a57890df6af504ed0c67a23f452e301262168504f549597b7558157127409a1dc9a133f2ff3aa08e8d1"
+            "d2531ec82a4efa81c47fc994c5ef16062da9cbb831be02a7d06db3c323e8bc7ff31eeeccd9eec1e1a29753c9f5057b334c6da01121"
+            "6e54284435209aebf5584b389a52f77d6f605a61258d0226d1ca40dd6665d70f90fa803bb3a857b8f41b15e4c8532a10766d761182"
+            "2dfa9bb33eba4d0c632fc58d76cb2a15704b583793567508dc91024cee7e92dd439f7c0ec91e1623c5b23d005bb647c4b6e6808060"
+            "0e2278dc48dc3f642ebebd08991d5294381a74f050b982d56680a97180636280db3b378e71f02d7df8ecdf7142e8f1fa113616f3d4"
+            "31cc0447ed0360eebca0928741f8a81feffbee38b2814aaeef475af3256bf14bff6a1a1fe7febc03278b9d1edde1a54aaef6b69302"
+            "cc1e515ddb1bfb9307ddfa26cc662b7493d2fe13af997ed08ab5542bf2fee6f5db7246e9d79f06469ac3915d3a1017ed4ae3dad7e9"
+            "4bd9d40548f469929676d55ab2d881a71e3b0fb857d63da39a419352dacac88ac3ba2abca55fa9984fc1988fa6ce47899c0c672778"
+            "084b94ffa988c165dad4e74d9c9720a1dc84c5f60d0ca5ab9b01986046a8542bfcd02d7ecfbb2e04db3f951676f8d1ccf729722de6"
+            "b687ba2cfd19d0fd7f64adf75e6f30539aed88b699206250fb70b479ed4686");
+
+    std::vector<uint8_t> safebrowsing_packet = decode_from_hex(
+            "ce0000000108c7df6fadd25e8b6f00404600193962a345bfcad079bf3406322c05ff3526beaa674da2021a20d29d118ba39cd7b4ed"
+            "84c4cfddf6c8ffadca0d5584b856ab38e33fd4aad145bf3dda6ae2fc6f3174a59b07447585f33f7d40a4ad85ffe38404c8dbda0e22"
+            "19f6214b9de9d11d66aaba6f9efcb6fb4adc2a72632c17987e6547f386b92b6bfdab92dcff175c6f6ca4f554bd6ef2c64151b89b91"
+            "af4a01ca86edb11fa0e5c5b92c8737cd1ab8ee70e0f708280f383a680342cc364f122adc05223fe3a0812b57a377914f74096bd5bf"
+            "d3f461999e75bf2091d4141b3ddc9daa8a1c66b9e5776ddcea28a68f84f2c54d65cb65627948c280fd15896c1bf48eb383f7561b4d"
+            "233ff9aaaafa436a00b9dadf7a0ed3c3d890bbd889235d13ef8fcac22ff12783b33917cfd3b59b2933bd5e138114b25b8fa873b3f9"
+            "d8422ab52ae9ec5707410feffd27560f2ebff3281f61fd3e7c3f951c74a9213860b5b9fba5c290d18e2dbaa3b5abedc2ae5230bb92"
+            "58b91126f5870f616c6d44884daf7105f45e96ee0eda46fd750cca468531862cb7ba609d8c70d91f571e818c4796e89cd144dc5790"
+            "3df48467871e7f3dbaf799582dbcef01c0d76e268d9df6da65c37ee08b26553c7d8be6b2eb107ba1513490e85194debac7a38f269c"
+            "9aa4768247555db9032e8c1bee70bf6d5aad88402daf4afa4fe4dda94d42abbe923ad16fc082b8fa5a1547e71eb1c38dd1fce77534"
+            "996b457b2920ba666d496ebbbfb7cf4eafd3a1cd690dd1a9e50d9167bb92e6b315acb994528fd7cb7294b03c42c06c2d1f70bed9d1"
+            "e9b9ac333ab7350ed4e106073784edb5dcefaf433d258059055ee727ceb88d8f25be0acc7d39f6bca482ad2488d8a4e46bc04f8696"
+            "742e9357868be60af7cdce304fb8ff77dfc548c4b63587179070a9ce03ba4cff0e5d16f47ffa2570bcc843929215884650414e0c4f"
+            "5ac07ae02bec12491708b74cfe503d25f4090ddc6ad0f743e9c5517fe41536e478d4b59bbf3ac16b3107adac123f633d1130c9b788"
+            "59393393ec998b4a0b826293aaa39476964f30476dad0f4ccc94c1cf2d02a0181e438721c26082da956aa988c19d611d210edf7400"
+            "e2f72fa99ad08e37f2cbacce08ec444b1d89c834c48ce4a8d4399a86eca184605323c3ee55eb08e9a5b1be61c11ddac4f9de3aca5b"
+            "08851c37313e52f197dfa2caef3c3d926610f80291a7d1d160f5fd2a0074a91cf7abe729cadd8fd8d2aacdcd474c4cb68f870ea567"
+            "c4338ee794598d380c546664375bc3770bb903bb3ed2596f567ee5669ccba97e182d0c2919a2e926d571a55b0239fcf98e3b821fde"
+            "05852c76830eb3a48320d20bc22938046bc20b2c19b165fc017307c6d27d80857e9450da799766457e040c6eb514e5d68b5e74d83b"
+            "a0303db5e45b90f711cc2536477cd927c71dfdc866992d49648f13e2dd697ff2c9457d8cadc9b858718f8ca591ed2611c2d9a5e165"
+            "73702494ad2b291de771caa65c34b053c193ec1c89229b18b1963b4284066e8f7824ed63aa8e04f490579ea5947a924df1a44a7bfb"
+            "996c3a73604f116ce5fae0064d3440fd643596bb8846ef006611734b446088e5306b9d4c089930d80d4a5d3c48904ea88b528f7914"
+            "cb1afe9375e51943a901623b8cc6e6693a644e12d47bff95c5d3c83377a0a2e720101421a81a020c9848ffd305546e3dcfbe35ee4b"
+            "8cac7f2f1703c92d7f20a4");
+
+    for (auto *p : {&draft28_pkt, &draft34_pkt, &google_mangled_pkt, &vk_packet, &safebrowsing_packet}) {
         std::vector<uint8_t> &pkt = *p;
 
         ag::quic_utils::QuicPacketHeader hd;
@@ -206,4 +258,20 @@ TEST(QuicUtilsTest, ExtractClientHello) {
         std::cout << "Hostname: " << tls.tls_hostname << std::endl;
         ASSERT_TRUE(got_sni);
     }
+}
+
+TEST(QuicUtilsTest, ExtractClientHelloFailed) {
+    std::vector<uint8_t> super_short_packet = decode_from_hex(
+            "ce0000000108c7df6fadd25e8b6f00404600193962a345bfcad079bf3406322c05ff3526beaa674da2021a20d29d118ba39cd7b4ed"
+            "84c4cfddf6c8ffadca0d5584b856ab38e33fd4aad145bf3dda6ae2fc6f3174a59b07447585");
+    std::vector<uint8_t> &pkt = super_short_packet;
+
+    ag::quic_utils::QuicPacketHeader hd;
+    // Extract data needed for decryption of initial packet
+    int result = quiche_header_info(pkt.data(), pkt.size(), QUICHE_MAX_CONN_ID_LEN, &hd.version, &hd.type,
+            hd.scid.data(), &hd.scid_len, hd.dcid.data(), &hd.dcid_len, hd.token.data(), &hd.token_len);
+    ASSERT_EQ(result, 0);
+    auto payload = ag::quic_utils::decrypt_initial({pkt.data(), pkt.size()}, hd);
+
+    ASSERT_FALSE(payload);
 }
