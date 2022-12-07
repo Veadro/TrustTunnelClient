@@ -2,6 +2,8 @@
 
 #include <bitset>
 #include <cstdint>
+#include <list>
+#include <vector>
 
 #include "vpn/event_loop.h"
 #include "vpn/internal/domain_lookuper.h"
@@ -93,6 +95,9 @@ struct UdpVpnConnection : public VpnConnection {
     bool check_dns_queries_completed(PacketDirection dir);
 
     void count_dns_message(PacketDirection type);
+
+    std::list<std::vector<uint8_t>> buffered_packets;
+    event_loop::AutoTaskId send_buffered_task;
 
 private:
     uint32_t m_dns_query_counter = 0;

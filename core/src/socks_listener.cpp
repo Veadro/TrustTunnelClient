@@ -136,7 +136,7 @@ ClientListener::InitResult SocksListener::init(VpnClient *vpn, ClientHandler han
         socks5_config.read_threshold = this->vpn->conn_memory_buffer_threshold;
     }
 
-    Socks5ListenerHnadler event_handler = {socks_handler, this};
+    Socks5ListenerHandler event_handler = {socks_handler, this};
     m_socks5_listener = socks5_listener_create(&socks5_config, &event_handler);
     if (m_socks5_listener == nullptr) {
         errlog(m_log, "Failed to create SOCKS listener");

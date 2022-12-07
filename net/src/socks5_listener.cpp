@@ -186,7 +186,7 @@ typedef struct ag::Socks5Listener {
     khash_t(udp_relays_by_id) * udp_relays;
     struct evconnlistener *evconn_listener;
     ag::Socks5ListenerConfig config;
-    ag::Socks5ListenerHnadler handler;
+    ag::Socks5ListenerHandler handler;
     std::string upbuffer;
 } Socks5Listener;
 
@@ -229,7 +229,7 @@ static void destroy_connection(Socks5Listener *listener, Connection *conn);
 static void terminate_udp_association(Socks5Listener *listener, Connection *tcp_conn, VpnError error);
 static bool is_udp_association_tcp_connection(const Socks5Listener *listener, const Connection *conn);
 
-Socks5Listener *socks5_listener_create(const Socks5ListenerConfig *config, const Socks5ListenerHnadler *handler) {
+Socks5Listener *socks5_listener_create(const Socks5ListenerConfig *config, const Socks5ListenerHandler *handler) {
     auto *listener = new Socks5Listener{};
     if (listener == nullptr) {
         return nullptr;
@@ -806,10 +806,7 @@ static void pend_udp_packet(Connection *conn, const uint8_t *data, size_t length
     conn->udp.pending_udp_packets.emplace_back(data, data + length);
 }
 
-// Return number of processed bytes
-static size_t handle_udp_read(Socks5Listener *listener, Connection *conn, const uint8_t *data, size_t length) {
-    size_t n = length;
-
+static void handle_udp_read(Socks5Listener *listener, Connection *conn, const uint8_t *data, size_t length) {
     switch (conn->state) {
     case S5CONNS_IDLE:
         conn->state = S5CONNS_WAITING_CONNECT_RESULT;
@@ -828,24 +825,20 @@ static size_t handle_udp_read(Socks5Listener *listener, Connection *conn, const 
         break;
     case S5CONNS_ESTABLISHED: {
         if (!conn->udp.readable) {
-            log_conn(listener, conn->id, conn->proto, dbg, "Connection isn't readable, dropping packet ({} bytes)", n);
+            log_conn(listener, conn->id, conn->proto, dbg, "Connection isn't readable, dropping packet ({} bytes)",
+                    length);
             break;
         }
 
         Socks5ReadEvent event = {conn->id, data, length, 0};
         listener->handler.func(listener->handler.arg, SOCKS5L_EVENT_READ, &event);
-        if (event.result == 0) {
-            n = 0;
-        }
         break;
     }
     case S5CONNS_FAILED:
         log_conn(listener, conn->id, conn->proto, dbg, "Connection is in {} state, dropping packet ({} bytes)",
-                magic_enum::enum_name(conn->state), n);
+                magic_enum::enum_name(conn->state), length);
         break;
     }
-
-    return n;
 }
 
 static struct event *create_udp_event(Socks5Listener *listener, Connection *conn) {
@@ -1107,17 +1100,13 @@ static void udp_event_handler(evutil_socket_t fd, short what, void *arg) {
         struct sockaddr_storage src = {};
         socklen_t src_len = sizeof(src);
 
-        evutil_socket_t fd = event_get_fd(relay->udp_event);
-        int r = recvfrom(fd, (char *) buffer, UDP_MAX_DATAGRAM_SIZE, MSG_PEEK, (struct sockaddr *) &src, &src_len);
+        int r = recvfrom(fd, (char *) buffer, UDP_MAX_DATAGRAM_SIZE, 0, (struct sockaddr *) &src, &src_len);
 
         if (r > 0) {
             Connection *conn;
             int processed_bytes = process_udp_header(listener, relay, buffer, r, &src, &conn);
-            if (processed_bytes <= 0
-                    || 0 != handle_udp_read(listener, conn, buffer + processed_bytes, r - processed_bytes)) {
-                // drain packet if it was sent successfully, or drop it if something went wrong;
-                // if it was not sent, leave it in buffer and try later
-                recvfrom(fd, (char *) buffer, UDP_MAX_DATAGRAM_SIZE, 0, (struct sockaddr *) &src, &src_len);
+            if (processed_bytes > 0) {
+                handle_udp_read(listener, conn, buffer + processed_bytes, r - processed_bytes);
             }
         } else if (r < 0) {
             VpnError error = make_vpn_error_from_fd(fd);
@@ -1213,7 +1202,7 @@ static void sock_handler(void *arg, TcpSocketEvent what, void *data) {
         if (is_udp_association_tcp_connection(listener, conn)) {
             VpnError error = {};
             if (sock_event->length != 0) {
-                error = {-1, "Got some data on TCP socket of UDP assocation session"};
+                error = {-1, "Got some data on TCP socket of UDP association session"};
             }
             terminate_udp_association(listener, conn, error);
             break;

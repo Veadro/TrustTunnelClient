@@ -189,6 +189,10 @@ static void close_client_side_connection(Tunnel *self, VpnConnection *conn, int 
             break;
         }
 
+        if (conn->complete_connect_request_task.has_value()) {
+            break;
+        }
+
         conn->complete_connect_request_task = event_loop::submit(self->vpn->parameters.ev_loop,
                 {
                         new CompleteConnectRequestCtx{self, conn->client_id, err_code},
@@ -341,6 +345,35 @@ static bool check_upstream(const Tunnel *self, const VpnConnection *conn, const 
             && (conn == nullptr || conn->upstream == u);
 }
 
+static void send_buffered_data(const Tunnel *self, uint64_t conn_client_id) {
+    VpnConnection *conn = vpn_connection_get_by_id(self->connections.by_client_id, conn_client_id);
+    if (conn == nullptr) {
+        log_tun(self, dbg, "Connection not found: [L:{}]", conn_client_id);
+        return;
+    }
+
+    auto *udp_conn = (UdpVpnConnection *) conn;
+    udp_conn->send_buffered_task.release();
+    for (std::vector<uint8_t> &packet : std::exchange(udp_conn->buffered_packets, {})) {
+        ssize_t r = udp_conn->upstream->send(udp_conn->server_id, packet.data(), packet.size());
+        if (r == ssize_t(packet.size())) {
+            continue;
+        }
+
+        if (r < 0) {
+            log_conn(self, udp_conn, dbg, "Failed to send data: error={}", r);
+        } else {
+            log_conn(self, udp_conn, dbg, "Sent partially: {} bytes out of {}", r, packet.size());
+        }
+
+        udp_conn->listener->close_connection(conn_client_id, false, false);
+        return;
+    }
+
+    udp_conn->upstream->update_flow_control(
+            udp_conn->server_id, udp_conn->listener->flow_control_info(conn_client_id));
+}
+
 void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *data) {
     switch (what) {
     case SERVER_EVENT_SESSION_OPENED:
@@ -389,10 +422,36 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
             conn->state = CONNS_CONNECTED;
             conn->migrating_client_id = NON_ID;
             add_connection(this, conn);
+            if (conn->proto == IPPROTO_UDP) {
+                std::swap(((UdpVpnConnection *) conn)->buffered_packets,
+                        ((UdpVpnConnection *) src_conn)->buffered_packets);
+            }
 
             src_conn->upstream->close_connection(src_conn->server_id, false, false);
 
             log_conn(this, conn, dbg, "Upstream has been switched successfully");
+            if (conn->proto == IPPROTO_UDP) {
+                auto *udp_conn = (UdpVpnConnection *) conn;
+                if (!udp_conn->buffered_packets.empty()) {
+                    struct Ctx {
+                        Tunnel *tunnel;
+                        uint64_t conn_client_id;
+                    };
+                    udp_conn->send_buffered_task = event_loop::submit(this->vpn->parameters.ev_loop,
+                            {
+                                    new Ctx{this, conn->client_id},
+                                    [](void *arg, TaskId) {
+                                        auto *ctx = (Ctx *) arg;
+                                        send_buffered_data(ctx->tunnel, ctx->conn_client_id);
+                                    },
+                                    [](void *arg) {
+                                        delete (Ctx *) arg;
+                                    },
+                            });
+                    break;
+                }
+            }
+
             conn->listener->turn_read(conn->client_id, true);
             conn->upstream->update_flow_control(conn->server_id, conn->listener->flow_control_info(conn->client_id));
             break;
@@ -648,7 +707,11 @@ static ServerUpstream *select_upstream(const Tunnel *self, VpnConnectAction acti
     return upstream;
 }
 
-static void initiate_connection_migration(Tunnel *self, VpnConnection *conn, ServerUpstream *upstream) {
+/**
+ * @return Number of bytes to consume, if some
+ */
+[[nodiscard]] static std::optional<size_t> initiate_connection_migration(
+        Tunnel *self, VpnConnection *conn, ServerUpstream *upstream, U8View packet) {
     log_conn(self, conn, dbg, "Migrating to {} upstream",
             (upstream == self->vpn->endpoint_upstream.get())         ? "VPN endpoint"
                     : (upstream == self->vpn->bypass_upstream.get()) ? "direct"
@@ -658,8 +721,10 @@ static void initiate_connection_migration(Tunnel *self, VpnConnection *conn, Ser
     uint64_t server_id = upstream->open_connection(&conn->addr, conn->proto, {});
     if (server_id == NON_ID) {
         close_client_side_connection(self, conn, -1, true);
-        return;
+        return std::nullopt;
     }
+
+    std::optional<size_t> to_consume;
 
     VpnConnection *sw_conn = VpnConnection::make(NON_ID, conn->addr, conn->proto);
     sw_conn->server_id = server_id;
@@ -668,14 +733,22 @@ static void initiate_connection_migration(Tunnel *self, VpnConnection *conn, Ser
     sw_conn->state = CONNS_WAITING_RESPONSE_MIGRATING;
     sw_conn->migrating_client_id = conn->client_id;
     add_connection(self, sw_conn);
+    if (conn->proto == IPPROTO_UDP) {
+        // do not turn off reads on migrating UDP connections,
+        // because otherwise the unread packets might be dropped
+        ((UdpVpnConnection *) conn)->buffered_packets.emplace_back(packet.begin(), packet.end());
+        to_consume = packet.size();
+    } else {
+        conn->listener->turn_read(conn->client_id, false);
+    }
 
     conn->state = CONNS_CONNECTED_MIGRATING;
-    conn->listener->turn_read(conn->client_id, false);
     if (conn->upstream != nullptr) {
         conn->upstream->update_flow_control(conn->server_id, {});
     }
 
     log_conn(self, sw_conn, trace, "Connecting...");
+    return to_consume;
 }
 
 std::optional<VpnConnectAction> Tunnel::finalize_connect_action(
@@ -1208,9 +1281,13 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
                     break;
                 }
 
-                initiate_connection_migration(this, conn,
-                        select_upstream(
-                                this, invert_action(vpn_mode_to_action(this->vpn->domain_filter.get_mode())), conn));
+                if (std::optional to_consume = initiate_connection_migration(this, conn,
+                            select_upstream(
+                                    this, invert_action(vpn_mode_to_action(this->vpn->domain_filter.get_mode())), conn),
+                            {event->data, event->length});
+                        to_consume.has_value()) {
+                    conn->listener->consume(conn->client_id, to_consume.value());
+                }
                 break;
             }
         }
@@ -1222,7 +1299,11 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
                     "Couldn't find domain name for suspect-to-be-exclusion connection, routing it as usual");
             conn->flags.reset(CONNF_FAKE_CONNECTION);
             conn->flags.reset(CONNF_SUSPECT_EXCLUSION);
-            initiate_connection_migration(this, conn, select_upstream(this, VPN_CA_DEFAULT, conn));
+            if (std::optional to_consume = initiate_connection_migration(
+                        this, conn, select_upstream(this, VPN_CA_DEFAULT, conn), {event->data, event->length});
+                    to_consume.has_value()) {
+                conn->listener->consume(conn->client_id, to_consume.value());
+            }
             break;
         }
 
@@ -1271,6 +1352,14 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
                 // connection will be closed inside listener
             }
             break;
+        }
+        case CONNS_CONNECTED_MIGRATING: {
+            if (conn->proto == IPPROTO_UDP) {
+                auto *udp_conn = (UdpVpnConnection *) conn;
+                udp_conn->buffered_packets.emplace_back(event->data, event->data + event->length);
+                break;
+            }
+            [[fallthrough]];
         }
         default:
             log_conn(this, conn, err, "Connection has invalid state: {} (event={})",

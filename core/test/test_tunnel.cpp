@@ -211,8 +211,7 @@ public:
         bypass_upstream = (TestUpstream *) vpn.bypass_upstream.get();
 
         vpn.client_listener = std::make_unique<TestListener>();
-        ASSERT_EQ(ClientListener::InitResult::SUCCESS,
-                vpn.client_listener->init(&vpn, {&listener_handler, this}));
+        ASSERT_EQ(ClientListener::InitResult::SUCCESS, vpn.client_listener->init(&vpn, {&listener_handler, this}));
         client_listener = (TestListener *) vpn.client_listener.get();
 
         ASSERT_TRUE(tun.init(&vpn));

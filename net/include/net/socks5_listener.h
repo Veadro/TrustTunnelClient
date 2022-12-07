@@ -79,7 +79,7 @@ typedef struct Socks5Listener Socks5Listener;
 typedef struct {
     void (*func)(void *arg, Socks5ListenerEvent what, void *data);
     void *arg;
-} Socks5ListenerHnadler;
+} Socks5ListenerHandler;
 
 typedef enum {
     S5LCR_SUCCESS,
@@ -126,7 +126,7 @@ typedef struct {
  * @param handler event handler
  * @return listener
  */
-Socks5Listener *socks5_listener_create(const Socks5ListenerConfig *config, const Socks5ListenerHnadler *handler);
+Socks5Listener *socks5_listener_create(const Socks5ListenerConfig *config, const Socks5ListenerHandler *handler);
 
 /**
  * Start socks5 listener
