@@ -87,9 +87,33 @@ static constexpr FsmTransitionEntry TRANSITION_TABLE[] = {
 
 } // namespace vpn_client
 
+static VpnError start_dns_proxy(VpnClient *self);
+
 static void release_deferred_task(VpnClient *self, TaskId task) {
     if (auto n = self->deferred_tasks.extract(event_loop::make_auto_id(task)); !n.empty()) {
         n.value().release();
+    }
+}
+
+static void endpoint_connector_finalizer(void *arg, TaskId task_id) {
+    auto *self = (VpnClient *) arg;
+    release_deferred_task(self, task_id);
+    self->endpoint_connector.reset();
+
+    if (self->pending_error.has_value()) {
+        self->fsm.perform_transition(vpn_client::E_SESSION_CLOSED, nullptr);
+        return;
+    }
+
+    self->tunnel->upstream_handler(self->endpoint_upstream.get(), SERVER_EVENT_SESSION_OPENED, nullptr);
+    self->fsm.perform_transition(vpn_client::E_SESSION_OPENED, nullptr);
+
+    // reconnect or `listen` was called before connection procedure completion
+    if (self->client_listener != nullptr) {
+        self->tunnel->on_exclusions_updated();
+        if (self->dns_proxy != nullptr) {
+            self->do_dns_upstream_health_check();
+        }
     }
 }
 
@@ -101,30 +125,19 @@ static void endpoint_connector_handler(void *arg, EndpointConnectorResult result
         self->pending_error = *e;
     } else {
         self->endpoint_upstream = std::move(std::get<std::unique_ptr<ServerUpstream>>(result));
+        if (self->listener_config.dns_upstream != nullptr && self->dns_proxy == nullptr) {
+            VpnError error = start_dns_proxy(self);
+            if (error.code != VPN_EC_NOERROR) {
+                self->pending_error = error;
+            }
+        }
     }
 
-    self->deferred_tasks.emplace(event_loop::submit(
-            self->parameters.ev_loop, {self, [](void *arg, TaskId task_id) {
-                                           auto *self = (VpnClient *) arg;
-                                           release_deferred_task(self, task_id);
-                                           self->endpoint_connector.reset();
-                                           if (!self->pending_error.has_value()) {
-                                               self->tunnel->upstream_handler(self->endpoint_upstream.get(),
-                                                       SERVER_EVENT_SESSION_OPENED, nullptr);
-                                               self->fsm.perform_transition(vpn_client::E_SESSION_OPENED, nullptr);
-
-                                               // reconnect or `listen` was called before connection procedure
-                                               // completion
-                                               if (self->client_listener != nullptr) {
-                                                   self->tunnel->on_exclusions_updated();
-                                                   if (self->dns_proxy != nullptr) {
-                                                       self->do_dns_upstream_health_check();
-                                                   }
-                                               }
-                                           } else {
-                                               self->fsm.perform_transition(vpn_client::E_SESSION_CLOSED, nullptr);
-                                           }
-                                       }}));
+    self->deferred_tasks.emplace(event_loop::submit(self->parameters.ev_loop,
+            {
+                    .arg = self,
+                    .action = endpoint_connector_finalizer,
+            }));
 }
 
 static void vpn_upstream_handler(void *arg, ServerEvent what, void *data) {
@@ -386,13 +399,6 @@ VpnError VpnClient::connect(vpn_client::EndpointConnectionConfig config, std::op
         goto fail;
     }
 
-    if (this->listener_config.dns_upstream != nullptr && this->dns_proxy == nullptr) {
-        error = start_dns_proxy(this);
-        if (error.code != VPN_EC_NOERROR) {
-            goto fail;
-        }
-    }
-
     log_client(this, dbg, "Done");
     return error;
 
@@ -438,13 +444,6 @@ VpnError VpnClient::listen(
 
     if (this->tmp_files_base_path.has_value()) {
         clean_up_buffer_files(this->tmp_files_base_path->c_str());
-    }
-
-    if (this->listener_config.dns_upstream != nullptr && this->dns_proxy == nullptr) {
-        error = start_dns_proxy(this);
-        if (error.code != VPN_EC_NOERROR) {
-            goto fail;
-        }
     }
 
     // got here after connect procedure completion
@@ -566,8 +565,15 @@ void VpnClient::do_health_check() {
 }
 
 void VpnClient::do_dns_upstream_health_check() {
-    this->tunnel->dns_resolver->resolve(
+    std::optional resolve_id = this->tunnel->dns_resolver->resolve(
             VDRQ_FOREGROUND, std::string(DNS_PROXY_CHECK_DOMAIN), 1 << dns_utils::RT_A, {dns_resolver_handler, this});
+    if (!resolve_id.has_value()) {
+        log_client(this, dbg, "Failed to start DNS upstream health check");
+        VpnDnsUpstreamUnavailableEvent event = {
+                .upstream = this->listener_config.dns_upstream,
+        };
+        this->parameters.handler.func(this->parameters.handler.arg, vpn_client::EVENT_DNS_UPSTREAM_UNAVAILABLE, &event);
+    }
 }
 
 VpnConnectionStats VpnClient::get_connection_stats() const {

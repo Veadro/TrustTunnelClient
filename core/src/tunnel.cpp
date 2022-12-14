@@ -788,7 +788,7 @@ std::optional<VpnConnectAction> Tunnel::finalize_connect_action(
         log_conn(this, conn, dbg, "DNS query will be routed to DNS upstream");
         out = VPN_CA_FORCE_BYPASS;
         conn->flags.set(CONNF_ROUTE_TO_DNS_PROXY);
-    } else if (conn->flags.test(CONNF_PLAIN_DNS_CONNECTION)) {
+    } else if (conn->flags.test(CONNF_PLAIN_DNS_CONNECTION) && this->vpn->endpoint_upstream != nullptr) {
         log_conn(this, conn, dbg, "Routing plain DNS connection through endpoint");
         out = VPN_CA_FORCE_REDIRECT;
     } else if (const sockaddr_storage *dst = std::get_if<sockaddr_storage>(&conn->addr.dst); dst != nullptr) {
@@ -1095,10 +1095,14 @@ void Tunnel::on_after_endpoint_disconnect(ServerUpstream *upstream) { // NOLINT(
 void Tunnel::on_exclusions_updated() {
     assert(this->endpoint_upstream_connected);
 
-    std::vector<std::string_view> names = this->vpn->domain_filter.get_resolvable_exclusions();
-    this->dns_resolver->set_ipv6_availability(this->vpn->ipv6_available);
-    for (std::string_view name : names) {
-        this->dns_resolver->resolve(VDRQ_BACKGROUND, std::string(name));
+    if (this->vpn->endpoint_upstream != nullptr) {
+        std::vector<std::string_view> names = this->vpn->domain_filter.get_resolvable_exclusions();
+        this->dns_resolver->set_ipv6_availability(this->vpn->ipv6_available);
+        for (std::string_view name : names) {
+            this->dns_resolver->resolve(VDRQ_BACKGROUND, std::string(name));
+        }
+    } else {
+        log_tun(this, dbg, "Skipping exclusions resolve as there's no connection to endpoint");
     }
 
     using namespace std::chrono;
