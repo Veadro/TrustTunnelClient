@@ -316,12 +316,15 @@ void UpstreamMultiplexer::child_upstream_handler(void *arg, ServerEvent what, vo
 
     auto pool_it = mux->m_upstreams_pool.find(ctx->id);
     if (pool_it == mux->m_upstreams_pool.end()) {
-        pool_it = mux->m_closed_upstreams.find(ctx->id);
-        if (pool_it == mux->m_closed_upstreams.end()) {
-            log_mux(mux, err, "Got event on closed upstream: id={} event={}", ctx->id, magic_enum::enum_name(what));
-            assert(0);
+        if (mux->m_closed_upstreams.contains(ctx->id)) {
+            log_mux(mux, dbg, "Ignoring event on closing upstream: id={} event={}", ctx->id,
+                    magic_enum::enum_name(what));
             return;
         }
+        log_mux(mux, err, "Got event on closed or non-existent upstream: id={} event={}", ctx->id,
+                magic_enum::enum_name(what));
+        assert(0);
+        return;
     }
 
     switch (what) {
