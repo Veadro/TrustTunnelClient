@@ -435,15 +435,22 @@ static void vpn_protect_socket(SocketProtectEvent *event) {
         return;
     }
     if (event->peer->sa_family == AF_INET) {
-        setsockopt(event->fd, IPPROTO_IP, IP_BOUND_IF, &idx, sizeof(idx));
+        if (setsockopt(event->fd, IPPROTO_IP, IP_BOUND_IF, &idx, sizeof(idx)) != 0) {
+            event->result = -1;
+        }
     } else if (event->peer->sa_family == AF_INET6) {
-        setsockopt(event->fd, IPPROTO_IPV6, IPV6_BOUND_IF, &idx, sizeof(idx));
+        if (setsockopt(event->fd, IPPROTO_IPV6, IPV6_BOUND_IF, &idx, sizeof(idx)) != 0) {
+            event->result = -1;
+        }
     }
 #endif // __APPLE__
 #ifdef __linux__
     if (!g_params.bound_if.empty()) {
-        setsockopt(
-                event->fd, SOL_SOCKET, SO_BINDTODEVICE, g_params.bound_if.data(), (socklen_t) g_params.bound_if.size());
+        if (setsockopt(event->fd, SOL_SOCKET, SO_BINDTODEVICE, g_params.bound_if.data(),
+                    (socklen_t) g_params.bound_if.size())
+                != 0) {
+            event->result = -1;
+        }
     }
 #endif
 #ifdef _WIN32

@@ -345,33 +345,37 @@ static bool check_upstream(const Tunnel *self, const VpnConnection *conn, const 
             && (conn == nullptr || conn->upstream == u);
 }
 
-static void send_buffered_data(const Tunnel *self, uint64_t conn_client_id) {
+static bool send_buffered_data(const Tunnel *self, uint64_t conn_client_id) {
     VpnConnection *conn = vpn_connection_get_by_id(self->connections.by_client_id, conn_client_id);
     if (conn == nullptr) {
         log_tun(self, dbg, "Connection not found: [L:{}]", conn_client_id);
-        return;
+        return false;
     }
 
-    auto *udp_conn = (UdpVpnConnection *) conn;
-    udp_conn->send_buffered_task.release();
-    for (std::vector<uint8_t> &packet : std::exchange(udp_conn->buffered_packets, {})) {
-        ssize_t r = udp_conn->upstream->send(udp_conn->server_id, packet.data(), packet.size());
-        if (r == ssize_t(packet.size())) {
+    conn->send_buffered_task.release();
+    for (std::vector<uint8_t> &packet : std::exchange(conn->buffered_packets, {})) {
+        log_conn(self, conn, trace, "Sending {} bytes from buffered packets", packet.size());
+        const ssize_t r = conn->upstream->send(conn->server_id, packet.data(), packet.size());
+        if (r >= 0 && size_t(r) == packet.size()) {
+            conn->outgoing_bytes += r;
             continue;
         }
 
         if (r < 0) {
-            log_conn(self, udp_conn, dbg, "Failed to send data: error={}", r);
+            log_conn(self, conn, dbg, "Failed to send data: error={}", r);
         } else {
-            log_conn(self, udp_conn, dbg, "Sent partially: {} bytes out of {}", r, packet.size());
+            log_conn(self, conn, dbg, "Sent partially: {} bytes out of {}", r, packet.size());
         }
 
-        udp_conn->listener->close_connection(conn_client_id, false, false);
-        return;
+        conn->listener->close_connection(conn_client_id, false, false);
+        return false;
     }
 
-    udp_conn->upstream->update_flow_control(
-            udp_conn->server_id, udp_conn->listener->flow_control_info(conn_client_id));
+    size_t server_can_send = conn->upstream->available_to_send(conn->server_id);
+    log_conn(self, conn, trace, "Server side can send {} bytes", server_can_send);
+    conn->listener->turn_read(conn->client_id, server_can_send > 0);
+    conn->upstream->update_flow_control(conn->server_id, conn->listener->flow_control_info(conn_client_id));
+    return true;
 }
 
 void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *data) {
@@ -430,26 +434,23 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
             src_conn->upstream->close_connection(src_conn->server_id, false, false);
 
             log_conn(this, conn, dbg, "Upstream has been switched successfully");
-            if (conn->proto == IPPROTO_UDP) {
-                auto *udp_conn = (UdpVpnConnection *) conn;
-                if (!udp_conn->buffered_packets.empty()) {
-                    struct Ctx {
-                        Tunnel *tunnel;
-                        uint64_t conn_client_id;
-                    };
-                    udp_conn->send_buffered_task = event_loop::submit(this->vpn->parameters.ev_loop,
-                            {
-                                    new Ctx{this, conn->client_id},
-                                    [](void *arg, TaskId) {
-                                        auto *ctx = (Ctx *) arg;
-                                        send_buffered_data(ctx->tunnel, ctx->conn_client_id);
-                                    },
-                                    [](void *arg) {
-                                        delete (Ctx *) arg;
-                                    },
-                            });
-                    break;
-                }
+            if (!conn->buffered_packets.empty()) {
+                struct Ctx {
+                    Tunnel *tunnel;
+                    uint64_t conn_client_id;
+                };
+                conn->send_buffered_task = event_loop::submit(this->vpn->parameters.ev_loop,
+                        {
+                                new Ctx{this, conn->client_id},
+                                [](void *arg, TaskId) {
+                                    auto *ctx = (Ctx *) arg;
+                                    send_buffered_data(ctx->tunnel, ctx->conn_client_id);
+                                },
+                                [](void *arg) {
+                                    delete (Ctx *) arg;
+                                },
+                        });
+                break;
             }
 
             conn->listener->turn_read(conn->client_id, true);
@@ -741,9 +742,10 @@ static ServerUpstream *select_upstream(const Tunnel *self, VpnConnectAction acti
     if (conn->proto == IPPROTO_UDP) {
         // do not turn off reads on migrating UDP connections,
         // because otherwise the unread packets might be dropped
-        ((UdpVpnConnection *) conn)->buffered_packets.emplace_back(packet.begin(), packet.end());
+        conn->buffered_packets.emplace_back(packet.begin(), packet.end());
         processed = packet.size();
     } else {
+        sw_conn->buffered_packets = std::move(conn->buffered_packets);
         conn->listener->turn_read(conn->client_id, false);
     }
 
@@ -1265,8 +1267,19 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
             case ALUA_DONE:
                 conn->flags.reset(CONNF_LOOKINGUP_DOMAIN);
                 break;
-            case ALUA_PASS:
+            case ALUA_PASS: {
+                // If tunnel faced with Anti-Dpi which can split ClientHello into parts, it needs to wait other parts
+                // of ClientHello message (max - 3 parts)
+                static constexpr int MAX_LOOKUP_ATTEMPTS = 3;
+                if (conn->lookup_attempts_num++ < MAX_LOOKUP_ATTEMPTS) {
+                    log_conn(this, conn, trace, "Adding pending packet, length: {}", event->length);
+                    conn->buffered_packets.emplace_back(event->data, event->data + event->length);
+                    event->result = event->length;
+                    return;
+                }
+                log_conn(this, conn, trace, "Exceeded the number of domain lookup attempts");
                 break;
+            }
             case ALUA_SHUTDOWN:
                 log_conn(this, conn, dbg, "Connection had been routed {} while should've been routed {}",
                         (conn->upstream == this->vpn->endpoint_upstream.get()) ? "through VPN endpoint"
@@ -1345,6 +1358,13 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
 
         switch (conn->state) {
         case CONNS_CONNECTED: {
+            if (!conn->buffered_packets.empty()) {
+                if (!send_buffered_data(this, conn->client_id)) {
+                    // connection has already closed
+                    event->result = -1;
+                    return;
+                }
+            }
             log_conn(this, conn, trace, "Sending {} bytes", event->length);
             event->result = (int) conn->upstream->send(conn->server_id, event->data, event->length);
             if (event->result > 0 || (size_t) event->result == event->length) {
@@ -1362,8 +1382,7 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
         }
         case CONNS_CONNECTED_MIGRATING: {
             if (conn->proto == IPPROTO_UDP) {
-                auto *udp_conn = (UdpVpnConnection *) conn;
-                udp_conn->buffered_packets.emplace_back(event->data, event->data + event->length);
+                conn->buffered_packets.emplace_back(event->data, event->data + event->length);
                 break;
             }
             [[fallthrough]];

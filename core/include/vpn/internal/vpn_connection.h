@@ -78,6 +78,9 @@ struct VpnConnection {
     event_loop::AutoTaskId complete_connect_request_task;
     size_t incoming_bytes = 0;
     size_t outgoing_bytes = 0;
+    std::list<std::vector<uint8_t>> buffered_packets;
+    event_loop::AutoTaskId send_buffered_task;
+    int lookup_attempts_num = 0;
 
     static VpnConnection *make(uint64_t client_id, TunnelAddressPair addr, int proto);
 
@@ -95,10 +98,6 @@ struct UdpVpnConnection : public VpnConnection {
     bool check_dns_queries_completed(PacketDirection dir);
 
     void count_dns_message(PacketDirection type);
-
-    std::list<std::vector<uint8_t>> buffered_packets;
-    event_loop::AutoTaskId send_buffered_task;
-
 private:
     uint32_t m_dns_query_counter = 0;
 

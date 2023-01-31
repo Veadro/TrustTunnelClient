@@ -494,6 +494,29 @@ TEST_F(FakeConnectionTest, ExcludedDomain) {
     ASSERT_TRUE(client_listener->connections[client_id].read_enabled);
 }
 
+TEST_F(FakeConnectionTest, ExcludedDomainWithAntiDpiImitation) {
+    // 3) Receive client hello with bypassed domain and start the migration
+    size_t size_before = bypass_upstream->connections.size();
+    ClientRead read_event_first_fragment = {client_id, CLIENT_HELLO, 1, 0};
+    tun.listener_handler(client_listener, CLIENT_EVENT_READ, &read_event_first_fragment);
+    ASSERT_EQ(read_event_first_fragment.result, 1);
+
+    ClientRead read_event_second_fragment = {client_id, CLIENT_HELLO + 1, std::size(CLIENT_HELLO) - 1, 0};
+    tun.listener_handler(client_listener, CLIENT_EVENT_READ, &read_event_second_fragment);
+    ASSERT_EQ(read_event_second_fragment.result, 0) << "Buffer pointer must not be slid";
+    ASSERT_GT(bypass_upstream->connections.size(), size_before);
+
+    bypass_id = bypass_upstream->connections.back();
+    tun.upstream_handler(bypass_upstream, SERVER_EVENT_CONNECTION_OPENED, &bypass_id);
+
+    ASSERT_EQ(fake_upstream->closing_connections.size(), 1);
+    tun.fake_upstream->handler.func(
+            tun.fake_upstream->handler.arg, SERVER_EVENT_CONNECTION_CLOSED, &fake_upstream->closing_connections[0]);
+
+    // Read=off while buffered_packets is pending.
+    ASSERT_FALSE(client_listener->connections[client_id].read_enabled);
+}
+
 TEST_F(FakeConnectionTest, MissingDomain) {
     constexpr const char HTTP_REQUEST[] = "GET / HTTP/1.1\r\nAccept: text/html\r\n";
 
