@@ -1,4 +1,6 @@
-#include "vpn/internal/dns_proxy_accessor.h"
+#include <algorithm>
+
+#include <magic_enum.hpp>
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -6,46 +8,65 @@
 #undef gettid
 #include "dns/proxy/dnsproxy.h"
 
+#include "common/defs.h"
 #include "common/logger.h"
+#include "net/network_manager.h"
+#include "vpn/internal/dns_proxy_accessor.h"
 
 #define log_accessor(r_, lvl_, fmt_, ...) lvl_##log((r_)->m_log, fmt_, ##__VA_ARGS__)
 
-using namespace std::chrono;
-
 namespace ag {
 
-static dns::DnsProxySettings make_dns_proxy_settings(const DnsProxyAccessor::Parameters &parameters, milliseconds timeout) {
+static dns::DnsProxySettings make_dns_proxy_settings(const DnsProxyAccessor::Parameters &parameters, Millis timeout) {
     dns::DnsProxySettings settings = dns::DnsProxySettings::get_default();
-    settings.upstreams = {{
-            .address = parameters.resolver_address,
-            .bootstrap = {std::begin(AG_UNFILTERED_DNS_IPS_V4), std::end(AG_UNFILTERED_DNS_IPS_V4)},
-            .timeout = timeout,
-            .id = 0,
-    }};
+    settings.upstreams.clear();
+    settings.upstreams.reserve(parameters.upstreams.size());
+    uint32_t outbound_interface = vpn_network_manager_get_outbound_interface();
+    std::transform(parameters.upstreams.begin(), parameters.upstreams.end(),
+            std::back_inserter(settings.upstreams),
+            [timeout, id = 0, outbound_interface](const DnsProxyAccessor::Upstream &upstream) mutable {
+                IpAddress resolved_host;
+                if (upstream.resolved_host.has_value()) {
+                    uint8_t *data = nullptr;
+                    if (upstream.resolved_host->is_ipv4()) {
+                        data = resolved_host.emplace<Ipv4Address>().data();
+                    } else {
+                        data = resolved_host.emplace<Ipv6Address>().data();
+                    }
+                    auto *ip = (uint8_t *)sockaddr_get_ip_ptr(upstream.resolved_host->c_sockaddr());
+                    size_t size = sockaddr_get_ip_size(upstream.resolved_host->c_sockaddr());
+                    std::copy(ip, ip + size, data);
+                }
 
-    settings.fallbacks = {};
+                return dns::UpstreamOptions{
+                        .address = upstream.address,
+                        .bootstrap = {std::begin(AG_UNFILTERED_DNS_IPS_V4), std::end(AG_UNFILTERED_DNS_IPS_V4)},
+                        .timeout = timeout,
+                        .resolved_server_ip = resolved_host,
+                        .id = id++,
+                        .outbound_interface =
+                                (outbound_interface != 0) ? IfIdVariant(outbound_interface) : std::monostate{},
+                };
+            });
 
-    settings.listeners = {
-            {
-                    .address = "127.0.0.1",
-                    .port = 0,
-                    .protocol = ag::utils::TP_UDP,
-            },
-            {
-                    .address = "127.0.0.1",
-                    .port = 0,
-                    .protocol = ag::utils::TP_TCP,
-            },
-    };
+    settings.fallbacks.clear();
 
-    settings.outbound_proxy = {{
-            .protocol = dns::OutboundProxyProtocol::SOCKS5_UDP,
-            .address = sockaddr_ip_to_str((sockaddr *) &parameters.socks_listener_address),
-            .port = sockaddr_get_port((sockaddr *) &parameters.socks_listener_address),
-            .auth_info = std::nullopt,
-            .trust_any_certificate = false,
-            .ignore_if_unavailable = false,
-    }};
+    settings.listeners.clear();
+    settings.listeners.reserve(magic_enum::enum_count<utils::TransportProtocol>());
+    for (utils::TransportProtocol protocol : magic_enum::enum_values<utils::TransportProtocol>()) {
+        settings.listeners.push_back({
+                .address = "127.0.0.1",
+                .protocol = protocol,
+        });
+    }
+
+    if (parameters.socks_listener_address.has_value()) {
+        settings.outbound_proxy = {{
+                .protocol = dns::OutboundProxyProtocol::SOCKS5_UDP,
+                .address = sockaddr_ip_to_str((sockaddr *) &parameters.socks_listener_address.value()),
+                .port = sockaddr_get_port((sockaddr *) &parameters.socks_listener_address.value()),
+        }};
+    }
 
     settings.ipv6_available = parameters.ipv6_available;
     settings.enable_route_resolver = false;
@@ -118,8 +139,8 @@ bool DnsProxyAccessor::start(std::chrono::milliseconds timeout) {
         }
     }
 
-    if (m_dns_proxy_udp_listen_address.ss_family == AF_UNSPEC
-            || m_dns_proxy_tcp_listen_address.ss_family == AF_UNSPEC) {
+    if (AF_UNSPEC == m_dns_proxy_udp_listen_address.ss_family
+            || AF_UNSPEC == m_dns_proxy_tcp_listen_address.ss_family) {
         log_accessor(this, err, "DNS proxy is not listening for queries over {}",
                 (m_dns_proxy_udp_listen_address.ss_family == AF_UNSPEC) ? "UDP" : "TCP");
         this->stop();
@@ -138,8 +159,13 @@ void DnsProxyAccessor::stop() {
     m_dns_proxy_tcp_listen_address = {};
 }
 
-const sockaddr_storage &DnsProxyAccessor::get_listen_address(int proto) const {
-    return (proto == IPPROTO_UDP) ? m_dns_proxy_udp_listen_address : m_dns_proxy_tcp_listen_address;
+const sockaddr_storage &DnsProxyAccessor::get_listen_address(utils::TransportProtocol protocol) const {
+    switch (protocol) {
+    case utils::TP_UDP:
+        return m_dns_proxy_udp_listen_address;
+    case utils::TP_TCP:
+        return m_dns_proxy_tcp_listen_address;
+    }
 }
 
 } // namespace ag

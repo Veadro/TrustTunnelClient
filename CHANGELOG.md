@@ -1,8 +1,17 @@
 # CHANGELOG
 
+* DNS queries are now routed according to VPN settings. I.e., queries with domains
+  matching exclusions are routed directly to the target resolver in the general mode,
+  but queries not matching exclusions are routed through the endpoint. To do it correctly
+  the library needs to know the system (see `dns_manager_set_tunnel_interface_servers()`)
+  and TUN interface DNS servers (see `vpn_network_manager_update_tun_interface_dns()`).
+* The library now has one centralized point for setting the outbound network
+  interface for I/O operations - `vpn_network_manager_set_outbound_interface()`.
+  * [Windows] Use the method above instead of the removed `vpn_win_set_bound_if()`.
+
 ## 0.91.82
 
-* [Fix] Introduced an error code indicating that no connection attempts left 
+* [Fix] Introduced an error code indicating that no connection attempts left
   after initial connect() call `VPN_EC_INITIAL_CONNECT_FAILED`.
 
 ## 0.91.45

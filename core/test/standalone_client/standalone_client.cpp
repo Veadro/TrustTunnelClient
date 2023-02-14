@@ -9,6 +9,7 @@
 #ifdef __linux__
 // clang-format off
 #include <net/if.h>
+
 #include <linux/if.h>
 #include <linux/if_tun.h>
 // clang-format on
@@ -32,13 +33,14 @@
 #include <magic_enum.hpp>
 #include <nlohmann/json.hpp>
 
-#include "common/cidr_range.h"
 #include "common/file.h"
 #include "common/logger.h"
 #include "common/net_utils.h"
 #include "common/utils.h"
+#include "net/network_manager.h"
 #include "net/os_tunnel.h"
 #include "net/tls.h"
+#include "net/utils.h"
 #include "tcpip/tcpip.h"
 #include "vpn/vpn.h"
 
@@ -54,10 +56,6 @@ static bool connect_to_server(Vpn *v, int line);
 static void vpn_handler(void *arg, VpnEvent what, void *data);
 
 static const ag::Logger g_logger("STANDALONE_CLIENT");
-
-#ifdef __APPLE__
-static uint32_t g_bound_if_index = 0; // bound interface index, to avoid route loop
-#endif
 
 enum ListenerType {
     LT_TUN,
@@ -85,6 +83,16 @@ static const std::unordered_map<std::string, VpnUpstreamProtocol> UPSTREAM_PROTO
 static const std::unordered_map<std::string, VpnMode> VPN_MODE_MAP = {
         {"general", VPN_MODE_GENERAL},
         {"selective", VPN_MODE_SELECTIVE},
+};
+
+enum TestingMode {
+    TM_REGULAR,
+    TM_RESTART,
+};
+
+static const std::unordered_map<std::string_view, TestingMode> TESTING_MODE_MAP = {
+        {"regular", TM_REGULAR},
+        {"restart", TM_RESTART},
 };
 
 static cxxopts::Options g_options("Standalone client", "Simple macOS/Linux console client");
@@ -130,6 +138,8 @@ struct Params {
     VpnUpstreamProtocol upstream_protocol;
     std::optional<VpnUpstreamProtocol> upstream_fallback_protocol;
     VpnMode mode;
+    TestingMode testing_mode;
+    std::optional<Millis> restart_period;
 
     void init(cxxopts::ParseResult &result, const std::string &config) {
         parse_json_config(config);
@@ -142,6 +152,15 @@ struct Params {
         }
         if (result.count("loglevel") > 0) {
             set_loglevel(result["loglevel"].as<std::string>());
+        }
+        testing_mode = TESTING_MODE_MAP.at(result["mode"].as<std::string>());
+        switch (testing_mode) {
+        case TM_REGULAR:
+            // do nothing
+            break;
+        case TM_RESTART:
+            restart_period = Millis{result["restart_period"].as<uint32_t>()};
+            break;
         }
     }
 
@@ -186,6 +205,8 @@ struct Params {
 
     void parse_json_config(const std::string &config) {
         nlohmann::json config_file = nlohmann::json::parse(config);
+        set_loglevel(config_file["loglevel"]);
+
         parse_server_info(config_file["server_info"]);
 
         if (auto it = LISTENER_TYPE_MAP.find(config_file["listener_type"]); it != LISTENER_TYPE_MAP.end()) {
@@ -202,31 +223,50 @@ struct Params {
             if (tun_info.contains("bound_if") && tun_info["bound_if"].is_string()) {
                 bound_if = tun_info["bound_if"];
             }
-#ifdef __APPLE__
-            if (bound_if.empty()) {
-                g_bound_if_index = 0;
-            } else {
-                g_bound_if_index = if_nametoindex(bound_if.c_str());
+
+            uint32_t if_index = 0;
+            if (!bound_if.empty()) {
+                if_index = if_nametoindex(bound_if.c_str());
                 // user put wrong interface name in settings
-                if (g_bound_if_index == 0) {
+                if (if_index == 0) {
                     errlog(g_logger, "Unknown interface type, use 'ifconfig' to see possible values");
                     exit(1);
                 }
-            }
-#endif
+            } else {
 #ifdef _WIN32
-            uint32_t idx;
-            bound_if.empty() ? idx = 0 : idx = if_nametoindex(bound_if.c_str());
-            if (idx == 0) {
-                idx = vpn_win_detect_active_if();
-            }
-            vpn_win_set_bound_if(idx);
+                if_index = vpn_win_detect_active_if();
+                char if_name[IF_NAMESIZE]{};
+                if_indextoname(if_index, if_name);
+                infolog(g_logger, "Using network interface: {} ({})", if_name, if_index);
 #endif
+            }
+            vpn_network_manager_set_outbound_interface(if_index);
         } else if (listener_type == LT_SOCKS) {
             parse_listener_info(config_file["socks_info"]);
         }
 
-        set_loglevel(config_file["loglevel"]);
+#ifdef _WIN32
+        uint32_t if_index = vpn_network_manager_get_outbound_interface();
+        Result<SystemDnsServers, RetrieveInterfaceDnsError> result = retrieve_interface_dns_servers(if_index);
+        if (result.has_error()) {
+            errlog(g_logger, "Failed to collect DNS servers: {}", result.error()->str());
+            exit(1);
+        }
+        if (!vpn_network_manager_update_system_dns(std::move(result.value()))) {
+            errlog(g_logger, "Failed to update DNS servers");
+            exit(1);
+        }
+#else
+        Result<SystemDnsServers, RetrieveSystemDnsError> result = retrieve_system_dns_servers();
+        if (result.has_error()) {
+            errlog(g_logger, "Failed to collect DNS servers: {}", result.error()->str());
+            exit(1);
+        }
+        if (!vpn_network_manager_update_system_dns(std::move(result.value()))) {
+            errlog(g_logger, "Failed to update DNS servers");
+            exit(1);
+        }
+#endif
 
         if (config_file.contains("dns_upstream")) {
             dns_upstream = config_file["dns_upstream"];
@@ -325,7 +365,8 @@ static void vpn_runner(ListenerType type) {
         for (const std::string &address : g_params.addresses) {
             auto result = ag::utils::split_host_port(address.c_str());
             if (result.has_error()) {
-                errlog(g_logger, "Failed to parse endpoint address: address={}, error={}", address, result.error()->str());
+                errlog(g_logger, "Failed to parse endpoint address: address={}, error={}", address,
+                        result.error()->str());
                 g_stop = true;
                 return;
             }
@@ -359,13 +400,21 @@ static void vpn_runner(ListenerType type) {
         const auto *win_defaults = vpn_win_tunnel_settings_defaults();
         win_settings.wintun_lib = g_wintun;
         win_settings.adapter_name = win_defaults->adapter_name;
-        static const char *dns_servers[] = {
-                AG_UNFILTERED_DNS_IPS_V4[0].data(),
-                AG_UNFILTERED_DNS_IPS_V4[1].data(),
-                AG_UNFILTERED_DNS_IPS_V6[0].data(),
-                AG_UNFILTERED_DNS_IPS_V6[1].data(),
+        static constexpr const char *DNS_SERVERS[] = {
+                "192.0.0.8",
         };
-        win_settings.dns_servers = {dns_servers, 4};
+        win_settings.dns_servers = {
+                .data = (const char **) DNS_SERVERS,
+                .size = uint32_t(std::size(DNS_SERVERS)),
+        };
+        if (!vpn_network_manager_update_tun_interface_dns(
+                    {win_settings.dns_servers.data, win_settings.dns_servers.size})) {
+            errlog(g_logger, "Failed to notify of TUN interface DNS servers");
+            g_tunnel->deinit();
+            g_tunnel.reset();
+            g_stop = true;
+            return;
+        }
         auto res = g_tunnel->init(&common_settings, &win_settings);
 #else
         auto res = g_tunnel->init(&common_settings);
@@ -405,20 +454,42 @@ static void vpn_runner(ListenerType type) {
 }
 
 static void listener_runner(ListenerType listener_type) {
-    g_vpn = vpn_open(&g_vpn_settings);
-    if (g_vpn == nullptr) {
-        abort();
+    switch (g_params.testing_mode) {
+    case TM_REGULAR: {
+        g_vpn = vpn_open(&g_vpn_settings);
+        if (g_vpn == nullptr) {
+            abort();
+        }
+
+        vpn_runner(listener_type);
+        std::unique_lock<std::mutex> listener_runner_lock(g_listener_runner_mutex);
+        g_listener_runner_barrier.wait(listener_runner_lock, []() {
+            return g_stop.load();
+        });
+        listener_runner_lock.unlock();
+        Vpn *vpn = g_vpn.exchange(nullptr);
+        vpn_stop(vpn);
+        vpn_close(vpn);
+        break;
+    }
+    case TM_RESTART: {
+        while (!g_stop) {
+            g_vpn = vpn_open(&g_vpn_settings);
+            if (g_vpn == nullptr) {
+                abort();
+            }
+
+            vpn_runner(listener_type);
+            std::this_thread::sleep_for(g_params.restart_period.value());
+            vpn_stop(g_vpn.load());
+
+            Vpn *vpn = g_vpn.exchange(nullptr);
+            vpn_close(vpn);
+        }
+        break;
+    }
     }
 
-    vpn_runner(listener_type);
-    std::unique_lock<std::mutex> listener_runner_lock(g_listener_runner_mutex);
-    g_listener_runner_barrier.wait(listener_runner_lock, []() {
-        return g_stop.load();
-    });
-    listener_runner_lock.unlock();
-    Vpn *vpn = g_vpn.exchange(nullptr);
-    vpn_stop(vpn);
-    vpn_close(vpn);
     if (g_tunnel) {
         g_tunnel->deinit();
         g_tunnel.reset();
@@ -430,7 +501,7 @@ static void listener_runner(ListenerType listener_type) {
 
 static void vpn_protect_socket(SocketProtectEvent *event) {
 #ifdef __APPLE__
-    uint32_t idx = g_bound_if_index;
+    uint32_t idx = vpn_network_manager_get_outbound_interface();
     if (idx == 0) {
         return;
     }
@@ -612,6 +683,12 @@ int main(int argc, char **argv) {
             ("s", "Skip verify certificate", cxxopts::value<bool>()->default_value("false"))
             ("c,config", "Config file name.", cxxopts::value<std::string>()->default_value(std::string(DEFAULT_CONFIG_FILE)))
             ("l,loglevel", "Logging level. Possible values: error, warn, info, debug, trace.", cxxopts::value<std::string>()->default_value("info"))
+            ("mode", "Testing mode. Possible values:\n"
+                     "   * regular - just start and work until user interrupt,\n"
+                     "   * restart - restart every 'restart_period' milliseconds.\n"
+                    , cxxopts::value<std::string>()->default_value("regular"))
+            ("restart_period", "Restart period in milliseconds. Has sense in case the testing mode is set to 'restart'."
+                    , cxxopts::value<uint32_t>()->default_value("2000"))
             ("help", "Print usage");
     // clang-format on
 

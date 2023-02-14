@@ -34,7 +34,7 @@ static constexpr uint8_t CLIENT_HELLO[] = {
 
 class TestUpstream : public ServerUpstream {
 public:
-    static int g_next_upstream_id;
+    static inline int g_next_upstream_id = 0;
 
     std::vector<uint64_t> connections;
     size_t last_send = 0;
@@ -104,8 +104,6 @@ public:
         std::optional<ClientConnectResult> result;
     };
 
-    static size_t g_next_connection_id;
-
     std::unordered_map<size_t, Connection> connections;
 
     TestListener() = default;
@@ -153,8 +151,6 @@ public:
     }
 };
 
-int TestUpstream::g_next_upstream_id = 0;
-size_t TestListener::g_next_connection_id = 1000000;
 static vpn_client::Event g_last_raised_vpn_event;
 
 static void vpn_handler(void *, vpn_client::Event what, void *) {
@@ -168,6 +164,7 @@ public:
     }
 
     DeclPtr<VpnEventLoop, &vpn_event_loop_destroy> ev_loop{vpn_event_loop_create()};
+    DeclPtr<VpnNetworkManager, &vpn_network_manager_destroy> network_manager{vpn_network_manager_get()};
     VpnClient vpn;
     Tunnel tun = {};
     sockaddr_storage src{};
@@ -195,13 +192,11 @@ public:
     void SetUp() override {
         ag::Logger::set_log_level(ag::LOG_LEVEL_TRACE);
 
-        TestUpstream::g_next_upstream_id = 0;
-        TestListener::g_next_connection_id = 0;
-
         src = sockaddr_from_str("1.1.1.1:1000");
         dst = sockaddr_from_str("1.1.1.2:443");
 
         vpn.parameters.handler = {&vpn_handler, this};
+        vpn.parameters.network_manager = network_manager.get();
 
         vpn.endpoint_upstream = std::make_unique<TestUpstream>();
         ASSERT_TRUE(vpn.endpoint_upstream->init(&vpn, {&redirect_upstream_handler, this}));
@@ -236,22 +231,22 @@ public:
 };
 
 TEST_F(TunnelTest, IPv6Unavailable) {
-    size_t client_id = TestListener::g_next_connection_id++;
+    size_t client_id = vpn.listener_conn_id_generator.get();
 
     dst = sockaddr_from_str("[::2:2:2:2]:443");
     ASSERT_NO_FATAL_FAILURE(raise_client_connection(client_id));
 
-    ConnectRequestResult result = {client_id, VPN_CA_DEFAULT, "some", 1};
-    std::optional<VpnConnectAction> action = tun.finalize_connect_action(result, false);
+    std::optional<VpnConnectAction> action = tun.finalize_connect_action({client_id, VPN_CA_DEFAULT, "some", 1});
     ASSERT_NE(action, VPN_CA_FORCE_BYPASS);
     tun.complete_connect_request(client_id, action);
+    run_event_loop_once();
     ASSERT_EQ(redirect_upstream->connections.size(), 0);
     ASSERT_NE(client_listener->connections.count(client_id), 0);
     ASSERT_EQ(client_listener->connections[client_id].result, CCR_UNREACH);
 }
 
 TEST_F(TunnelTest, LocalhostConnection) {
-    size_t client_id = TestListener::g_next_connection_id++;
+    size_t client_id = vpn.listener_conn_id_generator.get();
     dst = sockaddr_from_str("127.0.0.1:443");
     ClientConnectRequest event = {client_id, connection_protocol, (sockaddr *) &src, &dst};
     tun.listener_handler(client_listener, CLIENT_EVENT_CONNECT_REQUEST, &event);
@@ -264,11 +259,11 @@ TEST_F(TunnelTest, SelectiveDisconnectedClientExclusion) {
     // Simulate not yet connected state
     vpn.endpoint_upstream.reset();
 
-    uint64_t client_id = TestListener::g_next_connection_id++;
+    uint64_t client_id = vpn.listener_conn_id_generator.get();
     ASSERT_NO_FATAL_FAILURE(raise_client_connection(client_id));
 
     ConnectRequestResult result = {client_id, VPN_CA_DEFAULT, "some", 1};
-    std::optional<VpnConnectAction> action = tun.finalize_connect_action(result, false);
+    std::optional<VpnConnectAction> action = tun.finalize_connect_action(result);
     tun.complete_connect_request(client_id, action);
     ASSERT_EQ(bypass_upstream->connections.size(), 1);
     uint64_t upstream_id = bypass_upstream->connections.back();
@@ -297,15 +292,14 @@ public:
 
         ASSERT_TRUE(vpn.domain_filter.update_exclusions(VPN_MODE_GENERAL, "localhost"));
 
-        client_id = TestListener::g_next_connection_id++;
+        client_id = vpn.listener_conn_id_generator.get();
 
         // 1) Raise the request for connection
         ASSERT_NO_FATAL_FAILURE(raise_client_connection(client_id));
 
         // 2) Establish the connection through VPN endpoint
         size_t size_before = redirect_upstream->connections.size();
-        ConnectRequestResult result = {client_id, VPN_CA_DEFAULT, "some", 1};
-        std::optional<VpnConnectAction> action = tun.finalize_connect_action(result, false);
+        std::optional<VpnConnectAction> action = tun.finalize_connect_action({client_id, VPN_CA_DEFAULT, "some", 1});
         tun.complete_connect_request(client_id, action);
         ASSERT_GT(redirect_upstream->connections.size(), size_before);
         redirect_id = redirect_upstream->connections.back();
@@ -408,7 +402,7 @@ public:
 
         ASSERT_NO_FATAL_FAILURE(do_dns_resolve());
 
-        client_id = TestListener::g_next_connection_id++;
+        client_id = vpn.listener_conn_id_generator.get();
 
         // 1) Raise the request for connection
         ASSERT_NO_FATAL_FAILURE(raise_client_connection(client_id));
@@ -416,8 +410,7 @@ public:
         // 2) Tunnel sees the suspect address and routes the connection to the fake upstream
         size_t num_redirected = redirect_upstream->connections.size();
         size_t num_bypassed = bypass_upstream->connections.size();
-        ConnectRequestResult result = {client_id, VPN_CA_DEFAULT, "some", 1};
-        std::optional<VpnConnectAction> action = tun.finalize_connect_action(result, false);
+        std::optional<VpnConnectAction> action = tun.finalize_connect_action({client_id, VPN_CA_DEFAULT, "some", 1});
         ASSERT_FALSE(action.has_value());
         tun.complete_connect_request(client_id, action);
         run_event_loop_once();
@@ -439,22 +432,16 @@ public:
     }
 
     void do_dns_resolve() {
-        uint64_t client_conn_id = TestListener::g_next_connection_id++;
+        uint64_t client_conn_id = vpn.listener_conn_id_generator.get();
         TunnelAddress resolver_address = sockaddr_from_str("8.8.8.8:53");
         ClientConnectRequest event = {client_conn_id, IPPROTO_UDP, (sockaddr *) &src, &resolver_address};
         tun.listener_handler(client_listener, CLIENT_EVENT_CONNECT_REQUEST, &event);
 
-        size_t size_before = redirect_upstream->connections.size();
-        ConnectRequestResult result = {client_conn_id, VPN_CA_DEFAULT, "some", 1};
-        std::optional<VpnConnectAction> action = tun.finalize_connect_action(result, false);
+        size_t size_before = bypass_upstream->connections.size();
+        std::optional<VpnConnectAction> action = tun.finalize_connect_action({client_conn_id, VPN_CA_DEFAULT, "some", 1});
         ASSERT_FALSE(!action.has_value());
         tun.complete_connect_request(client_conn_id, action);
-        ASSERT_GT(redirect_upstream->connections.size(), size_before);
-
-        uint64_t upstream_conn_id = redirect_upstream->connections.back();
-        tun.upstream_handler(redirect_upstream, SERVER_EVENT_CONNECTION_OPENED, &upstream_conn_id);
-        ASSERT_EQ(client_listener->connections[client_conn_id].state, TestListener::CS_COMPLETED);
-        ASSERT_EQ(client_listener->connections[client_conn_id].result, CCR_PASS);
+        run_event_loop_once();
 
         tun.listener_handler(client_listener, CLIENT_EVENT_CONNECTION_ACCEPTED, &client_conn_id);
 
@@ -465,6 +452,13 @@ public:
 
         ClientRead client_read_event = {client_conn_id, DNS_QUERY, std::size(DNS_QUERY), 0};
         tun.listener_handler(client_listener, CLIENT_EVENT_READ, &client_read_event);
+        ASSERT_EQ(client_read_event.result, int(std::size(DNS_QUERY)));
+
+        ASSERT_GT(bypass_upstream->connections.size(), size_before);
+        uint64_t upstream_conn_id = bypass_upstream->connections.back();
+        tun.upstream_handler(bypass_upstream, SERVER_EVENT_CONNECTION_OPENED, &upstream_conn_id);
+        ASSERT_EQ(client_listener->connections[client_conn_id].state, TestListener::CS_COMPLETED);
+        ASSERT_EQ(client_listener->connections[client_conn_id].result, CCR_PASS);
 
         static constexpr uint8_t DNS_REPLY[] = {0x21, 0xfd, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
                 0x09, 0x6c, 0x6f, 0x63, 0x61, 0x6c, 0x68, 0x6f, 0x73, 0x74, 0x00, 0x00, 0x01, 0x00, 0x01, 0xc0, 0x0c,
@@ -473,6 +467,9 @@ public:
 
         ServerReadEvent upstream_read_event = {upstream_conn_id, DNS_REPLY, std::size(DNS_REPLY), 0};
         tun.upstream_handler(redirect_upstream, SERVER_EVENT_READ, &upstream_read_event);
+        ASSERT_EQ(upstream_read_event.result, int(std::size(DNS_REPLY)));
+
+        run_event_loop_once();
     }
 };
 
@@ -538,7 +535,7 @@ TEST_F(FakeConnectionTest, MissingDomain) {
 }
 
 TEST_F(FakeConnectionTest, NonscannablePort) {
-    client_id = TestListener::g_next_connection_id++;
+    client_id = vpn.listener_conn_id_generator.get();
 
     // 1) Raise the request for connection
     dst = sockaddr_from_str("1.1.1.2:777");
@@ -546,8 +543,7 @@ TEST_F(FakeConnectionTest, NonscannablePort) {
 
     // 2) Establish the connection through VPN endpoint
     size_t size_before = redirect_upstream->connections.size();
-    ConnectRequestResult result = {client_id, VPN_CA_DEFAULT, "some", 1};
-    std::optional<VpnConnectAction> action = tun.finalize_connect_action(result, false);
+    std::optional<VpnConnectAction> action = tun.finalize_connect_action({client_id, VPN_CA_DEFAULT, "some", 1});
     ASSERT_FALSE(action.has_value());
     tun.complete_connect_request(client_id, action);
     ASSERT_GT(redirect_upstream->connections.size(), size_before);
@@ -593,15 +589,14 @@ TEST_F(FakeConnectionTest, ExcludedBySelectiveMode) {
 TEST_F(FakeConnectionTest, TTL) {
     std::this_thread::sleep_for(std::chrono::seconds(2 * ANSWER_TTL_SEC));
 
-    client_id = TestListener::g_next_connection_id++;
+    client_id = vpn.listener_conn_id_generator.get();
 
     // 1) Raise the request for connection
     ASSERT_NO_FATAL_FAILURE(raise_client_connection(client_id));
 
     // 2) Establish the connection through VPN endpoint
     size_t size_before = redirect_upstream->connections.size();
-    ConnectRequestResult result = {client_id, VPN_CA_DEFAULT, "some", 1};
-    std::optional<VpnConnectAction> action = tun.finalize_connect_action(result, false);
+    std::optional<VpnConnectAction> action = tun.finalize_connect_action({client_id, VPN_CA_DEFAULT, "some", 1});
     ASSERT_EQ(action, VPN_CA_DEFAULT);
     tun.complete_connect_request(client_id, action);
     ASSERT_GT(redirect_upstream->connections.size(), size_before);
@@ -611,109 +606,4 @@ TEST_F(FakeConnectionTest, TTL) {
     tun.upstream_handler(redirect_upstream, SERVER_EVENT_CONNECTION_CLOSED, &redirect_id);
     ASSERT_EQ(client_listener->connections[client_id].state, TestListener::CS_COMPLETED);
     ASSERT_EQ(client_listener->connections[client_id].result, CCR_REJECT);
-}
-
-class AppInitiatedResolveTest : public TunnelTest {
-public:
-    uint64_t client_id = NON_ID;
-
-    void SetUp() override {
-        TunnelTest::SetUp();
-
-        vpn_network_manager_notify_app_request_domain("example.com", -1);
-
-        client_id = TestListener::g_next_connection_id++;
-        dst = sockaddr_from_str("1.1.1.1:53");
-        ASSERT_NO_FATAL_FAILURE(raise_client_connection(client_id));
-
-        ConnectRequestResult result = {client_id, VPN_CA_DEFAULT, "some", 1};
-        std::optional<VpnConnectAction> action = tun.finalize_connect_action(result, true);
-        ASSERT_EQ(action, VPN_CA_FORCE_BYPASS);
-        tun.complete_connect_request(client_id, action);
-        uint64_t upstream_id = bypass_upstream->connections.back();
-
-        tun.upstream_handler(bypass_upstream, SERVER_EVENT_CONNECTION_OPENED, &upstream_id);
-        ASSERT_EQ(client_listener->connections[client_id].state, TestListener::CS_COMPLETED);
-
-        ASSERT_FALSE(client_listener->connections[client_id].read_enabled);
-        tun.listener_handler(client_listener, CLIENT_EVENT_CONNECTION_ACCEPTED, &client_id);
-        ASSERT_TRUE(client_listener->connections[client_id].read_enabled);
-    }
-
-    void TearDown() override {
-        vpn_network_manager_notify_app_request_domain("example.com", 0);
-
-        TunnelTest::TearDown();
-    }
-};
-
-TEST_F(AppInitiatedResolveTest, MatchingDomain) {
-    dns_utils::EncodeResult encode_result = dns_utils::encode_request({dns_utils::RT_A, "example.com"});
-    ASSERT_TRUE(std::holds_alternative<dns_utils::EncodedRequest>(encode_result)) << encode_result.index();
-
-    const auto &request = std::get<dns_utils::EncodedRequest>(encode_result);
-    ClientRead read_event = {client_id, request.data.data(), std::size(request.data), 0};
-    tun.listener_handler(client_listener, CLIENT_EVENT_READ, &read_event);
-    ASSERT_EQ(bypass_upstream->last_send, std::size(request.data));
-    ASSERT_EQ(bypass_upstream->last_destination, dst)
-            << "Last destination: " << tunnel_addr_to_str(&bypass_upstream->last_destination) << std::endl
-            << "Expected: " << tunnel_addr_to_str(&dst);
-}
-
-TEST_F(AppInitiatedResolveTest, NonMatchingDomain) {
-    dns_utils::EncodeResult encode_result = dns_utils::encode_request({dns_utils::RT_A, "example.org"});
-    ASSERT_TRUE(std::holds_alternative<dns_utils::EncodedRequest>(encode_result)) << encode_result.index();
-
-    const auto &request = std::get<dns_utils::EncodedRequest>(encode_result);
-    ClientRead read_event = {client_id, request.data.data(), std::size(request.data), 0};
-    tun.listener_handler(client_listener, CLIENT_EVENT_READ, &read_event);
-    ASSERT_EQ(bypass_upstream->last_send, 0);
-}
-
-class DnsProxyTest : public TunnelTest {
-public:
-    uint64_t client_id = NON_ID;
-
-    void SetUp() override {
-        vpn.dns_proxy = std::make_unique<DnsProxyAccessor>(DnsProxyAccessor::Parameters{});
-        TunnelTest::SetUp();
-
-        vpn_network_manager_notify_app_request_domain("example.com", -1);
-
-        client_id = TestListener::g_next_connection_id++;
-        dst = sockaddr_from_str("1.1.1.1:53");
-        ASSERT_NO_FATAL_FAILURE(raise_client_connection(client_id));
-
-        ConnectRequestResult result = {client_id, VPN_CA_DEFAULT, "some", 1};
-        std::optional<VpnConnectAction> action = tun.finalize_connect_action(result, true);
-        ASSERT_EQ(action, VPN_CA_FORCE_BYPASS);
-        tun.complete_connect_request(client_id, action);
-        uint64_t upstream_id = bypass_upstream->connections.back();
-
-        tun.upstream_handler(bypass_upstream, SERVER_EVENT_CONNECTION_OPENED, &upstream_id);
-        ASSERT_EQ(client_listener->connections[client_id].state, TestListener::CS_COMPLETED);
-
-        ASSERT_FALSE(client_listener->connections[client_id].read_enabled);
-        tun.listener_handler(client_listener, CLIENT_EVENT_CONNECTION_ACCEPTED, &client_id);
-        ASSERT_TRUE(client_listener->connections[client_id].read_enabled);
-    }
-
-    void TearDown() override {
-        vpn_network_manager_notify_app_request_domain("example.com", 0);
-
-        TunnelTest::TearDown();
-    }
-};
-
-TEST_F(DnsProxyTest, AppInitiatedDnsMatchingDomain) {
-    dns_utils::EncodeResult encode_result = dns_utils::encode_request({dns_utils::RT_A, "example.com"});
-    ASSERT_TRUE(std::holds_alternative<dns_utils::EncodedRequest>(encode_result)) << encode_result.index();
-
-    const auto &request = std::get<dns_utils::EncodedRequest>(encode_result);
-    ClientRead read_event = {client_id, request.data.data(), std::size(request.data), 0};
-    tun.listener_handler(client_listener, CLIENT_EVENT_READ, &read_event);
-    ASSERT_EQ(bypass_upstream->last_send, std::size(request.data));
-    ASSERT_EQ(bypass_upstream->last_destination, dst)
-            << "Last destination: " << tunnel_addr_to_str(&bypass_upstream->last_destination) << std::endl
-            << "Expected: " << tunnel_addr_to_str(&dst);
 }

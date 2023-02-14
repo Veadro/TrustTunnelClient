@@ -1,8 +1,8 @@
-#include "vpn/guid_utils.h"
-
 #include <openssl/rand.h>
 
 #include "common/utils.h"
+#include "vpn/guid_utils.h"
+#include "vpn/utils.h"
 
 /// Placement of dashes in guid string format
 constexpr uint8_t GUID_DASH_IDX[] = {8, 13, 18, 23};

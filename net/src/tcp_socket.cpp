@@ -5,13 +5,11 @@
 #include <cassert>
 #include <cstddef>
 #include <cstring>
-#include <sys/types.h>
 #include <vector>
 
 #include <event2/buffer.h>
 #include <event2/bufferevent.h>
 #include <event2/bufferevent_ssl.h>
-#include <event2/dns.h>
 #include <event2/util.h>
 #include <openssl/err.h>
 
@@ -20,14 +18,6 @@
 #include "net/socket_manager.h"
 #include "net/tcp_socket.h"
 #include "vpn/utils.h"
-
-extern "C" {
-struct evdns_getaddrinfo_request *evutil_getaddrinfo_async_(struct evdns_base *dns_base, const char *nodename,
-        const char *servname, const struct evutil_addrinfo *hints_in, void (*cb)(int, struct evutil_addrinfo *, void *),
-        void *arg);
-
-void evutil_getaddrinfo_cancel_async_(struct evdns_getaddrinfo_request *data);
-} // extern "C"
 
 namespace ag {
 
@@ -66,8 +56,6 @@ struct TcpSocket {
     TaskId complete_read_task_id;
     int flags; // see `socket_flags_t`
     struct timeval timeouts_set_ts;
-    struct evdns_getaddrinfo_request *dns_request;
-    struct event *resolve_timeout_event;
     SSL *ssl;
     VpnError pending_connect_error; // buffer for synchronously raised error (see `SF_CONNECT_CALLED`)
 };
@@ -117,16 +105,6 @@ static void socket_clean_up(TcpSocket *socket) {
     if (socket->complete_read_task_id >= 0) {
         vpn_event_loop_cancel(socket->parameters.ev_loop, socket->complete_read_task_id);
         socket->complete_read_task_id = -1;
-    }
-
-    if (socket->dns_request != nullptr) {
-        evutil_getaddrinfo_cancel_async_(socket->dns_request);
-        socket->dns_request = nullptr;
-    }
-
-    if (socket->resolve_timeout_event != nullptr) {
-        event_free(socket->resolve_timeout_event);
-        socket->resolve_timeout_event = nullptr;
     }
 
     if (socket->bev != nullptr) {
@@ -209,9 +187,8 @@ void tcp_socket_set_read_enabled(TcpSocket *socket, bool flag) {
         // new data was received.
         const struct evbuffer *buffer = bufferevent_get_input(bev);
         if (socket->complete_read_task_id < 0 && evbuffer_get_length(buffer) > 0) {
-            socket->complete_read_task_id = vpn_event_loop_submit(
-                    socket->parameters.ev_loop, {socket, complete_read, nullptr}
-            );
+            socket->complete_read_task_id =
+                    vpn_event_loop_submit(socket->parameters.ev_loop, {socket, complete_read, nullptr});
             if (0 > socket->complete_read_task_id) {
                 log_sock(socket, err, "Failed to schedule manual read complete event");
                 socket->complete_read_task_id = -1;
@@ -410,71 +387,6 @@ static void on_connect_event(struct bufferevent *, short what, TcpSocket *ctx) {
     }
 }
 
-static void on_host_resolved(int err, struct evutil_addrinfo *resolved, void *arg) {
-    if (err == EVUTIL_EAI_CANCEL) {
-        // raised manually or socket has already been destroyed
-        return;
-    }
-
-    auto *socket = (TcpSocket *) arg;
-    log_sock(socket, dbg, "Got result");
-    socket->dns_request = nullptr; // Request will be freed automatically after exiting from this callback
-
-    if (socket->resolve_timeout_event != nullptr) {
-        event_free(socket->resolve_timeout_event);
-        socket->resolve_timeout_event = nullptr;
-    }
-
-    VpnError e = {};
-    if (resolved == nullptr) {
-        e.code = err;
-        e.text = evutil_gai_strerror(err);
-        log_sock(socket, dbg, "Failed to resolve host: {} ({})", e.text, e.code);
-    } else {
-        if (g_logger.is_enabled(LogLevel::LOG_LEVEL_DEBUG)) {
-            char dst[SOCKADDR_STR_BUF_SIZE];
-            sockaddr_to_str(resolved->ai_addr, dst, sizeof(dst));
-            log_sock(socket, dbg, "Resolved successfully: {}", dst);
-        }
-        socket->bev = create_bufferevent(socket, resolved->ai_addr, socket->ssl);
-        if (socket->bev == nullptr) {
-            e = {-1, "Failed to create buffer event after resolve"};
-        } else {
-            socket->ssl = nullptr;
-            bool is_sync_connect = !!(socket->flags & SF_CONNECT_CALLED);
-            socket->flags |= SF_CONNECT_CALLED;
-            int ret = bufferevent_socket_connect(socket->bev, resolved->ai_addr, (int) resolved->ai_addrlen);
-            if (!is_sync_connect) {
-                socket->flags &= ~SF_CONNECT_CALLED;
-            }
-            if (socket->pending_connect_error.code != 0) {
-                e = socket->pending_connect_error;
-            }
-            if (ret != 0) {
-                e.code = ret;
-                e.text = evutil_socket_error_to_string(e.code);
-            }
-
-            if (e.code == 0) {
-                log_sock(socket, dbg, "Connecting...");
-            } else {
-                log_sock(socket, dbg, "Failed to start connection after resolve%s: {} ({})", e.text, e.code,
-                        ret == 0 ? "" : " (bufferevent_socket_connect returned error)");
-            }
-        }
-        evutil_freeaddrinfo(resolved);
-    }
-
-    if (e.code != 0) {
-        if (!(socket->flags & SF_CONNECT_CALLED)) {
-            TcpSocketHandler *callbacks = &socket->parameters.handler;
-            callbacks->handler(callbacks->arg, TCP_SOCKET_EVENT_ERROR, &e);
-        } else {
-            socket->pending_connect_error = e;
-        }
-    }
-}
-
 static void on_sent_event(struct evbuffer *, const struct evbuffer_cb_info *info, void *arg) {
     auto *socket = (TcpSocket *) arg;
 
@@ -482,21 +394,6 @@ static void on_sent_event(struct evbuffer *, const struct evbuffer_cb_info *info
         TcpSocketHandler *callbacks = &socket->parameters.handler;
         TcpSocketSentEvent event = {info->n_deleted};
         callbacks->handler(callbacks->arg, TCP_SOCKET_EVENT_SENT, &event);
-    }
-}
-
-static void on_resolve_timeout(evutil_socket_t, short, void *arg) {
-    auto *socket = (TcpSocket *) arg;
-
-    if (socket->dns_request != nullptr) {
-        log_sock(socket, dbg, "Host resolving timed out");
-
-        evutil_getaddrinfo_cancel_async_(socket->dns_request);
-        socket->dns_request = nullptr;
-
-        TcpSocketHandler *callbacks = &socket->parameters.handler;
-        VpnError e = {utils::AG_ETIMEDOUT, evutil_socket_error_to_string(utils::AG_ETIMEDOUT)};
-        callbacks->handler(callbacks->arg, TCP_SOCKET_EVENT_ERROR, &e);
     }
 }
 
@@ -606,88 +503,40 @@ VpnError tcp_socket_connect(TcpSocket *socket, const TcpSocketConnectParameters 
     socket->ssl = param->ssl;
 
     VpnError error = {};
+    int ret;
 
-    switch (param->connect_by) {
-    case TCP_SOCKET_CB_ADDR: {
-        if (param->by_addr.addr != nullptr) {
-            char buf[SOCKADDR_STR_BUF_SIZE];
-            sockaddr_to_str(param->by_addr.addr, buf, sizeof(buf));
-            snprintf(socket->log_id, sizeof(socket->log_id), LOG_ID_PREADDR_FMT "%s", socket->id, buf);
+    if (param->peer != nullptr) {
+        char buf[SOCKADDR_STR_BUF_SIZE];
+        sockaddr_to_str(param->peer, buf, sizeof(buf));
+        snprintf(socket->log_id, sizeof(socket->log_id), LOG_ID_PREADDR_FMT "%s", socket->id, buf);
 
-            socket->bev = create_bufferevent(socket, param->by_addr.addr, param->ssl);
-            if (socket->bev != nullptr) {
-                socket->ssl = nullptr;
-            } else {
-                goto fail;
-            }
-        }
-        int ret = bufferevent_socket_connect(socket->bev, param->by_addr.addr, (int) sockaddr_get_size(param->by_addr.addr));
-        if (socket->pending_connect_error.code != 0) {
-            error = socket->pending_connect_error;
-            log_sock(socket, dbg, "Failed to start connection: {} ({})", safe_to_string_view(error.text), error.code);
+        socket->bev = create_bufferevent(socket, param->peer, param->ssl);
+        if (socket->bev != nullptr) {
+            socket->ssl = nullptr;
+        } else {
             goto fail;
         }
-        if (ret != 0) {
-            error.code = ret;
-            error.text = evutil_socket_error_to_string(error.code);
-            log_sock(socket, dbg, "Failed to start connection (bufferevent_socket_connect returned error): {} ({})",
-                    safe_to_string_view(error.text), error.code);
-            goto fail;
-        }
-        log_sock(socket, dbg, "Connecting...");
-        break;
     }
-    case TCP_SOCKET_CB_HOSTNAME:
-        snprintf(socket->log_id, sizeof(socket->log_id), LOG_ID_PREADDR_FMT "%s:%d", socket->id, param->by_name.host,
-                param->by_name.port);
-        char port_str[6] = {};
-        snprintf(port_str, sizeof(port_str), "%d", param->by_name.port);
-
-        // ignore family here, as if ipv6 is unavailable we won't be abe to establish connection
-        struct addrinfo hint = {};
-
-        // Work around libevent bug where it malloc's its own addrinfo's when no socktype/proto is specified,
-        // leading to a crash in freeaddrinfo on Windows
-        hint.ai_socktype = SOCK_STREAM;
-        hint.ai_protocol = IPPROTO_TCP;
-
-        socket->dns_request = evutil_getaddrinfo_async_(
-                param->by_name.dns_base, param->by_name.host, port_str, &hint, on_host_resolved, socket);
-        if (socket->pending_connect_error.code != 0) {
-            error = socket->pending_connect_error;
-            goto fail;
-        }
-
-        // Resolve could finish synchronously
-        if (socket->dns_request == nullptr && socket->bev == nullptr) {
-            log_sock(socket, err, "Failed to start host name resolving");
-            goto fail;
-        }
-
-        socket->resolve_timeout_event =
-                event_new(vpn_event_loop_get_base(socket->parameters.ev_loop), -1, 0, on_resolve_timeout, socket);
-        if (socket->resolve_timeout_event == nullptr) {
-            log_sock(socket, err, "Failed to add resolve timeout event");
-            goto fail;
-        }
-
-        const timeval tv = ms_to_timeval(uint32_t(socket->parameters.timeout.count()));
-        event_add(socket->resolve_timeout_event, &tv);
-
-        log_sock(socket, dbg, "Resolving...");
-        break;
+    ret = bufferevent_socket_connect(socket->bev, param->peer, (int) sockaddr_get_size(param->peer));
+    if (socket->pending_connect_error.code != 0) {
+        error = socket->pending_connect_error;
+        log_sock(socket, dbg, "Failed to start connection: {} ({})", safe_to_string_view(error.text), error.code);
+        goto fail;
     }
-
+    if (ret != 0) {
+        error.code = ret;
+        error.text = evutil_socket_error_to_string(error.code);
+        log_sock(socket, dbg, "Failed to start connection (bufferevent_socket_connect returned error): {} ({})",
+                safe_to_string_view(error.text), error.code);
+        goto fail;
+    }
+    log_sock(socket, dbg, "Connecting...");
     goto exit;
 
 fail:
     if (socket->bev != nullptr) {
         bufferevent_free(socket->bev);
         socket->bev = nullptr;
-    }
-    if (socket->dns_request != nullptr) {
-        evutil_getaddrinfo_cancel_async_(socket->dns_request);
-        socket->dns_request = nullptr;
     }
     if (error.code == 0) {
         error = {-1, "Internal error"};

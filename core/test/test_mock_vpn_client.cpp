@@ -31,7 +31,7 @@ void VpnClient::deinit() {
 }
 void VpnClient::process_client_packets(VpnPackets) {
 }
-std::optional<VpnConnectAction> VpnClient::finalize_connect_action(ConnectRequestResult &request_result, bool) const {
+std::optional<VpnConnectAction> VpnClient::finalize_connect_action(ConnectRequestResult request_result) const {
     return request_result.action;
 }
 void VpnClient::complete_connect_request(uint64_t id, std::optional<VpnConnectAction> action) {
@@ -55,17 +55,26 @@ void VpnClient::update_parameters(vpn_client::Parameters) {
 void VpnClient::do_health_check() {
     test_mock::g_client.notify_called(test_mock::CMID_DO_HEALTH_CHECK);
 }
-VpnConnectionStats VpnClient::get_connection_stats() const {
-    return {};
-}
-bool VpnClient::may_send_icmp_request() const {
-    return true;
-}
 void VpnClient::handle_sleep() {
 }
 void VpnClient::handle_wake() {
 }
+VpnConnectionStats VpnClient::get_connection_stats() const {
+    return {};
+}
+std::unique_ptr<DataBuffer> VpnClient::make_buffer(uint64_t) const {
+    return nullptr;
+}
+bool VpnClient::may_send_icmp_request() const {
+    return true;
+}
 int VpnClient::next_upstream_id() {
     static int id = 42;
     return id++;
+}
+std::string_view VpnClient::dns_health_check_domain() {
+    return "42";
+}
+bool VpnClient::drop_non_app_initiated_dns_queries() const {
+    return test_mock::g_client.is_dropping_non_app_initiated_dns_queries;
 }

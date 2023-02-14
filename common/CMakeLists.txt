@@ -43,7 +43,7 @@ target_link_libraries(vpnlibs_common
         CONAN_PKG::native_libs_common CONAN_PKG::libevent
         CONAN_PKG::magic_enum CONAN_PKG::dns-libs)
 if (MSVC)
-    target_link_libraries(vpnlibs_common Ws2_32 crypt32 UserEnv)
+    target_link_libraries(vpnlibs_common Ws2_32 crypt32 UserEnv Version)
     # Needed as fmt headers leak through the DNS proxy headers
     target_compile_definitions(vpnlibs_common PUBLIC FMT_EXCEPTIONS=0)
 endif()

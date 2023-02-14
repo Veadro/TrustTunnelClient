@@ -1,5 +1,6 @@
 #include <net/network_manager.h>
 
+#include <atomic>
 #include <mutex>
 #include <utility>
 
@@ -14,6 +15,7 @@ static struct NetworkManagerHolder {
     };
     std::mutex guard;
     ag::LruTimeoutCache<std::string, bool> app_domain_cache;
+    std::atomic<uint32_t> outbound_interface = 0;
 
     NetworkManagerHolder()
             : app_domain_cache(100, std::chrono::minutes(10)) {
@@ -38,13 +40,17 @@ void vpn_network_manager_destroy(VpnNetworkManager *m) {
     delete m;
 }
 
-bool vpn_network_manager_update_dns(VpnDnsServers servers) {
-    std::vector<std::string> v;
-    v.reserve(servers.size);
+bool vpn_network_manager_update_system_dns(SystemDnsServers servers) {
+    return dns_manager_set_system_servers(g_network_manager_holder.manager.dns, std::move(servers));
+}
+
+bool vpn_network_manager_update_tun_interface_dns(VpnDnsServers servers) {
+    // not using reserve as it leads to false-positive container-overflow error with apple asan
+    std::vector<std::string> v(servers.size);
     for (size_t i = 0; i < servers.size; ++i) {
-        v.emplace_back(servers.data[i]);
+        v[i] = servers.data[i];
     }
-    return dns_manager_set_servers(g_network_manager_holder.manager.dns, std::move(v));
+    return dns_manager_set_tunnel_interface_servers(g_network_manager_holder.manager.dns, std::move(v));
 }
 
 void vpn_network_manager_notify_app_request_domain(const char *domain, int timeout_ms) {
@@ -59,6 +65,14 @@ void vpn_network_manager_notify_app_request_domain(const char *domain, int timeo
 bool vpn_network_manager_check_app_request_domain(const char *domain) {
     std::scoped_lock l(g_network_manager_holder.guard);
     return (bool) g_network_manager_holder.app_domain_cache.get(domain);
+}
+
+void vpn_network_manager_set_outbound_interface(uint32_t idx) {
+    g_network_manager_holder.outbound_interface = idx;
+}
+
+uint32_t vpn_network_manager_get_outbound_interface() {
+    return g_network_manager_holder.outbound_interface;
 }
 
 } // namespace ag

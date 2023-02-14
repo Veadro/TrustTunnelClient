@@ -52,7 +52,7 @@ struct ClientRead {
      * try it after the other side enables read.
      * For a UDP connection may be equal to `length` in case packet was sent successfully, or
      * 0 in case the other side can't send anymore at the moment. In the latter case, the listener
-     * should retry later.
+     * may retry later or drop the packet.
      */
     int result;
 };

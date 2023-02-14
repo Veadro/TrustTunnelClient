@@ -8,8 +8,6 @@
 #include <variant>
 #include <vector>
 
-#include <event2/dns.h>
-
 #include "common/defs.h"
 #include "common/logger.h"
 #include "common/utils.h"
@@ -88,8 +86,6 @@ struct Vpn {
     vpn_manager::RecoveryInfo recovery = {};
     VpnHandler handler = {};
     DeclPtr<VpnNetworkManager, &vpn_network_manager_destroy> network_manager{vpn_network_manager_get()};
-    evdns_base *dns_base = dns_manager_create_base(this->network_manager->dns,
-            vpn_event_loop_get_base(this->ev_loop.get())); // DNS base used for resolving hosts in bypassing upstream
     AutoPod<VpnUpstreamConfig, vpn_upstream_config_destroy> upstream_config;
     /** The endpoint the client is connected or trying to connect to */
     std::optional<AutoVpnEndpoint> selected_endpoint;

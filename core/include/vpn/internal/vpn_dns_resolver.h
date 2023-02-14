@@ -7,10 +7,13 @@
 #include <queue>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <magic_enum.hpp>
 
+#include "common/clock.h"
+#include "common/defs.h"
 #include "common/logger.h"
 #include "net/dns_utils.h"
 #include "vpn/event_loop.h"
@@ -30,13 +33,12 @@ enum VpnDnsResolverQueue {
 
 /// Successfully resolved
 struct VpnDnsResolverSuccess {
-    sockaddr_storage addr;
+    /// Always non-empty
+    std::vector<sockaddr_storage> addresses;
 };
 
 /// Failed to resolve a domain for some reason
-struct VpnDnsResolverFailure {
-    dns_utils::RecordType record_type;
-};
+struct VpnDnsResolverFailure {};
 
 using VpnDnsResolverResult = std::variant<VpnDnsResolverSuccess, VpnDnsResolverFailure>;
 
@@ -48,6 +50,10 @@ class VpnDnsResolver : public ClientListener {
 public:
     /// Prevent UDP stream flooding
     static constexpr size_t MAX_PARALLEL_BACKGROUND_RESOLVES = 32;
+    /// Default query timeout
+    static constexpr Secs DEFAULT_QUERY_TIMEOUT{5};
+    /// Query timeout
+    static inline Millis g_query_timeout = DEFAULT_QUERY_TIMEOUT;
 
     using RecordTypeSet = std::bitset<magic_enum::enum_count<dns_utils::RecordType>()>;
     using QueueTypeSet = std::bitset<magic_enum::enum_count<VpnDnsResolverQueue>()>;
@@ -69,6 +75,11 @@ public:
     void deinit() override;
 
     /**
+     * Set the timeout value that is applied to each query
+     */
+    static void set_query_timeout(Millis v);
+
+    /**
      * Set the IPV6 availability
      */
     void set_ipv6_availability(bool available);
@@ -83,6 +94,14 @@ public:
     std::optional<VpnDnsResolveId> resolve(VpnDnsResolverQueue queue, std::string name,
             RecordTypeSet record_types = 1 << dns_utils::RT_A | 1 << dns_utils::RT_AAAA,
             ResultHandler result_handler = {});
+
+    /**
+     * Lookup for the resolve ID
+     * @param query_id the DNS query ID
+     * @param name the domain name contained in the query
+     * @return Some ID if found
+     */
+    std::optional<VpnDnsResolveId> lookup_resolve_id(uint16_t query_id, std::string_view name) const;
 
     /**
      * Stop the specified resolving procedure silently
@@ -108,31 +127,35 @@ private:
         std::string name;
         RecordTypeSet record_types;
         ResultHandler handler = {};
+        std::vector<sockaddr_storage> resolved_addresses;
+        std::array<std::optional<uint16_t>, magic_enum::enum_count<dns_utils::RecordType>()> queries;
     };
 
     struct ResolveState {
         struct Query {
             VpnDnsResolveId id;
             dns_utils::RecordType record_type;
-            ResultHandler result_handler;
+            std::string name;
             VpnDnsResolverQueue queue_kind;
         };
 
         uint64_t connection_id = NON_ID;
-        bool is_open = false;
         std::unordered_map<uint16_t, Query> queries;
-        event_loop::AutoTaskId timeout_task;
+        // The whole fake connection timeout
+        event_loop::AutoTaskId connection_timeout_task;
+        // The ticks with the period of `QUERY_TIMEOUT` cancelling expired queries
+        event_loop::AutoTaskId periodic_queries_check_task;
+        std::multimap<SteadyClock::time_point, uint16_t> deadlines;
     };
 
-    using Queue = std::map<VpnDnsResolveId, Resolve>;
+    using Queue = std::unordered_set<VpnDnsResolveId>;
 
     bool m_ipv6_available = false;
     VpnDnsResolveId next_id = 0;
+    std::unordered_map<VpnDnsResolveId, Resolve> resolutions;
     std::array<Queue, magic_enum::enum_count<VpnDnsResolverQueue>()> queues;
     ResolveState state;
-    std::vector<uint64_t> accepting_connections;
     event_loop::AutoTaskId deferred_accept_task;
-    std::vector<uint64_t> closing_connections;
     event_loop::AutoTaskId deferred_close_task;
     event_loop::AutoTaskId deferred_resolve_task;
     uint16_t next_connection_port = 1;
@@ -146,9 +169,10 @@ private:
     void turn_read(uint64_t id, bool on) override;
     int process_client_packets(VpnPackets packets) override;
 
-    void accept_pending_connection(uint64_t);
-    std::optional<std::pair<uint16_t, std::vector<uint8_t>>> make_request(bool is_aaaa, std::string_view name) const;
-    std::optional<uint16_t> send_request(bool is_aaaa, uint64_t conn_id, std::string_view name);
+    void accept_connection();
+    std::optional<std::pair<uint16_t, std::vector<uint8_t>>> make_request(
+            dns_utils::RecordType record_type, std::string_view name) const;
+    std::optional<uint16_t> send_request(dns_utils::RecordType record_type, uint64_t conn_id, std::string_view name);
     std::array<std::optional<uint16_t>, 2> send_request(
             uint64_t conn_id, std::string_view name, RecordTypeSet record_types);
     void resolve_pending_domains();
@@ -156,7 +180,8 @@ private:
     sockaddr_storage make_source_address();
     static void raise_result(ResultHandler h, VpnDnsResolveId id, VpnDnsResolverResult result);
 
-    static void on_resolve_timeout(void *arg, TaskId);
+    static void on_connection_timeout(void *arg, TaskId);
+    static void on_periodic_queries_check(void *arg, TaskId);
 };
 
 } // namespace ag

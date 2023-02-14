@@ -24,7 +24,7 @@ ag::VpnError ag::VpnLinuxTunnel::init(const ag::VpnOsTunnelSettings *settings) {
     setup_if();
     setup_routes();
 
-    return {0, "Tunnel init success"};
+    return {};
 }
 
 void ag::VpnLinuxTunnel::deinit() {

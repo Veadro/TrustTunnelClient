@@ -38,6 +38,7 @@ struct MockedVpnClient {
     std::vector<completed_connect_request_t> completed_connect_requests;
     std::vector<uint64_t> rejected_connect_requests;
     std::vector<uint64_t> reset_connections;
+    bool is_dropping_non_app_initiated_dns_queries = false;
 
     bool wait_called(ClientMethodId method, std::optional<std::chrono::milliseconds> timeout = std::nullopt) {
         std::unique_lock l(this->guard);

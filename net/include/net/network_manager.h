@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <vector>
+
 #include "net/dns_manager.h"
 #include "net/socket_manager.h"
 #include "vpn/utils.h"
@@ -27,9 +30,16 @@ VpnNetworkManager *vpn_network_manager_get();
 void vpn_network_manager_destroy(VpnNetworkManager *m);
 
 /**
- * Set DNS servers
+ * Update system DNS servers
  */
-extern "C" WIN_EXPORT bool vpn_network_manager_update_dns(VpnDnsServers servers);
+bool vpn_network_manager_update_system_dns(SystemDnsServers servers);
+
+/**
+ * The servers set to the virtual TUN interface set up by an application.
+ * Needed to distinct the DNS queries routed to the default peer from the queries
+ * routed to arbitrary ones.
+ */
+extern "C" WIN_EXPORT bool vpn_network_manager_update_tun_interface_dns(VpnDnsServers servers);
 
 /**
  * Notify that a domain is about to be queried by an application
@@ -42,5 +52,18 @@ extern "C" WIN_EXPORT void vpn_network_manager_notify_app_request_domain(const c
  * Check whether a domain belongs to queries from an application
  */
 bool vpn_network_manager_check_app_request_domain(const char *domain);
+
+/**
+ * Set the outbound interface that will be used for outgoing connections.
+ * [Windows] The currently active interface may be found with `vpn_win_detect_active_if()`.
+ * @param idx if >0, the library sets it as is
+ *            if =0, the library uses the default one
+ */
+extern "C" WIN_EXPORT void vpn_network_manager_set_outbound_interface(uint32_t idx);
+
+/**
+ * Get the outbound interface for outgoing connections
+ */
+uint32_t vpn_network_manager_get_outbound_interface();
 
 } // namespace ag

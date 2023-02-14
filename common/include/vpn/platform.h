@@ -183,4 +183,13 @@ int last_error();
 /** Get the error description */
 const char *strerror(int code);
 
+#ifdef _WIN32
+
+/**
+ * The helper for Windows 11 does not exist yet
+ */
+bool is_windows_11_or_greater();
+
+#endif
+
 } // namespace ag::sys

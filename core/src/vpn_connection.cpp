@@ -28,25 +28,4 @@ SockAddrTag VpnConnection::make_tag() const {
     return {(dst != nullptr) ? *dst : sockaddr_storage{}, this->app_name};
 }
 
-bool UdpVpnConnection::check_dns_queries_completed(PacketDirection dir) {
-    assert(this->flags.test(CONNF_PLAIN_DNS_CONNECTION));
-    this->count_dns_message(dir);
-    return this->are_dns_queries_completed();
-}
-
-void UdpVpnConnection::count_dns_message(PacketDirection type) {
-    switch (type) {
-    case PD_OUTGOING:
-        ++m_dns_query_counter;
-        break;
-    case PD_INCOMING:
-        --m_dns_query_counter;
-        break;
-    }
-}
-
-bool UdpVpnConnection::are_dns_queries_completed() const {
-    return m_dns_query_counter == 0;
-}
-
 } // namespace ag

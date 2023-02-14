@@ -98,3 +98,8 @@ class VpnLibsConan(ConanFile):
             "vpnlibs_tcpip",
             "vpnlibs_common",
         ]
+
+        if self.settings.os == "Windows":
+            self.cpp_info.system_libs = ["Version"]
+        elif self.settings.os != 'Android':
+            self.cpp_info.system_libs = ["resolv"]

@@ -3,6 +3,7 @@
 #include <bitset>
 #include <cstdint>
 #include <list>
+#include <string>
 #include <vector>
 
 #include "vpn/event_loop.h"
@@ -47,16 +48,8 @@ enum VpnConnectionFlags {
     CONNF_FAKE_CONNECTION,
     /// Connection traffic is plain DNS data
     CONNF_PLAIN_DNS_CONNECTION,
-    /// Drop all the DNS queries except those which resolve domains of the requests
-    /// made by an application
-    CONNF_DROP_NON_APP_DNS_QUERIES,
     /// Connection is routed through the local DNS proxy
     CONNF_ROUTE_TO_DNS_PROXY,
-};
-
-enum PacketDirection {
-    PD_OUTGOING,
-    PD_INCOMING,
 };
 
 class ClientListener;
@@ -95,13 +88,6 @@ struct VpnConnection {
 };
 
 struct UdpVpnConnection : public VpnConnection {
-    bool check_dns_queries_completed(PacketDirection dir);
-
-    void count_dns_message(PacketDirection type);
-private:
-    uint32_t m_dns_query_counter = 0;
-
-    [[nodiscard]] bool are_dns_queries_completed() const;
 };
 
 struct TcpVpnConnection : public VpnConnection {

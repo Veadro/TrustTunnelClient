@@ -1,9 +1,12 @@
-#include "direct_upstream.h"
+#include <utility>
 
 #include <event2/util.h>
+#include <magic_enum.hpp>
 
+#include "common/defs.h"
 #include "common/net_utils.h"
-#include "net/dns_manager.h"
+#include "direct_upstream.h"
+#include "net/network_manager.h"
 #include "net/utils.h"
 #include "vpn/internal/vpn_client.h"
 #include "vpn/utils.h"
@@ -69,11 +72,11 @@ void DirectUpstream::close_session() {
     log_upstream(this, dbg, "...");
 
     while (!m_tcp_connections.empty()) {
-        close_connection(m_tcp_connections.begin()->first, false);
+        close_connection(m_tcp_connections.begin()->first, false, false);
     }
 
     while (!m_udp_connections.empty()) {
-        close_connection(m_udp_connections.begin()->first, false);
+        close_connection(m_udp_connections.begin()->first, false, false);
     }
 
     m_icmp_requests.clear();
@@ -107,7 +110,7 @@ void DirectUpstream::tcp_socket_handler(void *arg, TcpSocketEvent what, void *da
             if (serv_event.result >= 0) {
                 sock_event->processed = serv_event.result;
             } else {
-                upstream->close_connection(ctx->conn_id, false);
+                upstream->close_connection(ctx->conn_id, false, false);
             }
         }
         break;
@@ -183,7 +186,7 @@ void DirectUpstream::udp_socket_handler(void *arg, UdpSocketEvent what, void *da
     }
 }
 
-uint64_t DirectUpstream::open_tcp_connection(const TunnelAddressPair *addr) {
+uint64_t DirectUpstream::open_tcp_connection(const sockaddr_storage &peer) {
     uint64_t id = this->vpn->upstream_conn_id_generator.get();
 
     std::unique_ptr<SocketContext> ctx = std::make_unique<SocketContext>(SocketContext{this, id});
@@ -201,31 +204,13 @@ uint64_t DirectUpstream::open_tcp_connection(const TunnelAddressPair *addr) {
 
     TcpSocketPtr sock{tcp_socket_create(&params)};
     if (sock == nullptr) {
+        log_upstream(this, dbg, "Failed to create socket");
         return NON_ID;
     }
 
-    TcpSocketConnectParameters param = {};
-    if (const sockaddr_storage *dst = std::get_if<sockaddr_storage>(&addr->dst); dst != nullptr) {
-        param = {
-                .connect_by = TCP_SOCKET_CB_ADDR,
-                .by_addr = {.addr = (sockaddr *) dst},
-        };
-    } else if (const NamePort *dst = std::get_if<NamePort>(&addr->dst); dst != nullptr) {
-        param = {
-                .connect_by = TCP_SOCKET_CB_HOSTNAME,
-                .by_name =
-                        {
-                                .dns_base = this->vpn->parameters.dns_base,
-                                .host = dst->name.c_str(),
-                                .port = dst->port,
-                        },
-        };
-    } else {
-        log_upstream(this, err, "Empty destination address");
-        assert(0);
-        return NON_ID;
-    }
-
+    TcpSocketConnectParameters param = {
+            .peer = (sockaddr *) &peer,
+    };
     if (0 != tcp_socket_connect(sock.get(), &param).code) {
         return NON_ID;
     }
@@ -237,13 +222,17 @@ uint64_t DirectUpstream::open_tcp_connection(const TunnelAddressPair *addr) {
     return id;
 }
 
-uint64_t DirectUpstream::open_udp_connection(const TunnelAddressPair *addr) {
+uint64_t DirectUpstream::open_udp_connection(const sockaddr_storage &peer) {
     uint64_t id = this->vpn->upstream_conn_id_generator.get();
     std::unique_ptr<SocketContext> ctx = std::make_unique<SocketContext>(SocketContext{this, id});
 
-    UdpSocketParameters params = {this->vpn->parameters.ev_loop, {udp_socket_handler, ctx.get()},
-            Millis{VPN_DEFAULT_UDP_TIMEOUT_MS}, *std::get_if<sockaddr_storage>(&addr->dst),
-            this->vpn->parameters.network_manager->socket};
+    UdpSocketParameters params = {
+            .ev_loop = this->vpn->parameters.ev_loop,
+            .handler = {udp_socket_handler, ctx.get()},
+            .timeout = Millis{VPN_DEFAULT_UDP_TIMEOUT_MS},
+            .peer = peer,
+            .socket_manager = this->vpn->parameters.network_manager->socket,
+    };
     UdpSocketPtr socket{udp_socket_create(&params)};
     if (socket == nullptr) {
         log_upstream(this, err, "Failed to create socket");
@@ -253,116 +242,82 @@ uint64_t DirectUpstream::open_udp_connection(const TunnelAddressPair *addr) {
     UdpConnection *conn = &m_udp_connections[id];
     conn->sock_ctx = std::move(ctx);
     conn->socket = std::move(socket);
-    conn->open_task_id = event_loop::submit(vpn->parameters.ev_loop,
-            {
-                    new SocketContext{this, id},
-                    [](void *arg, TaskId) {
-                        auto *ctx = (SocketContext *) arg;
-                        DirectUpstream *upstream = ctx->upstream;
-                        if (auto i = upstream->m_udp_connections.find(ctx->conn_id);
-                                i != upstream->m_udp_connections.end()) {
-                            upstream->handler.func(
-                                    upstream->handler.arg, SERVER_EVENT_CONNECTION_OPENED, &ctx->conn_id);
-                            UdpConnection *conn = &i->second;
-                            conn->open_task_id.release();
-                        }
-                    },
-                    [](void *arg) {
-                        delete (SocketContext *) arg;
-                    },
-            });
 
-    return id;
-}
-
-uint64_t DirectUpstream::open_connection(const TunnelAddressPair *addr, int proto, std::string_view app_name) {
-    (void) app_name;
-    uint64_t id = NON_ID;
-
-    if (proto == IPPROTO_TCP) {
-        id = open_tcp_connection(addr);
-    } else if (proto == IPPROTO_UDP) {
-        id = open_udp_connection(addr);
-    } else {
-        log_upstream(this, err, "Unknown protocol: {}", proto);
-        assert(0);
+    m_opening_connections.emplace(id);
+    if (!m_async_task.has_value()) {
+        m_async_task = event_loop::submit(this->vpn->parameters.ev_loop, {.arg = this, .action = on_async_task});
     }
 
     return id;
 }
 
-void DirectUpstream::close_connection(uint64_t id, bool graceful) {
-    if (m_tcp_connections.count(id) == 0 && m_udp_connections.count(id) == 0) {
-        // already raised in EOF event
+uint64_t DirectUpstream::open_connection(const TunnelAddressPair *addr, int proto, std::string_view) {
+    uint64_t id = NON_ID;
+
+    const auto *peer = std::get_if<sockaddr_storage>(&addr->dst);
+    if (peer == nullptr) {
+        log_upstream(this, dbg, "Destination peer is unresolved");
+        return NON_ID;
+    }
+
+    switch (ipproto_to_transport_protocol(proto).value()) {
+    case utils::TP_TCP:
+        id = open_tcp_connection(*peer);
+        break;
+    case utils::TP_UDP:
+        id = open_udp_connection(*peer);
+        break;
+    }
+
+    return id;
+}
+
+void DirectUpstream::close_connection(uint64_t id, bool graceful, bool async) {
+    m_opening_connections.erase(id);
+
+    if (async) {
+        m_closing_connections[id] = graceful;
+        if (!m_async_task.has_value()) {
+            m_async_task = event_loop::submit(this->vpn->parameters.ev_loop, {.arg = this, .action = on_async_task});
+        }
         return;
     }
 
     log_conn(this, id, dbg, "Closing");
+    m_closing_connections.erase(id);
 
-    if (auto i = m_tcp_connections.find(id); i != m_tcp_connections.end()) {
-        TcpConnection *conn = &i->second;
+    bool present = true;
+    if (auto tcp_node = m_tcp_connections.extract(id); !tcp_node.empty()) {
+        TcpConnection *conn = &tcp_node.mapped();
         if (!graceful && conn->socket != nullptr) {
             tcp_socket_set_rst(conn->socket.get());
         }
-
-        m_tcp_connections.erase(i);
-    } else if (auto i = m_udp_connections.find(id); i != m_udp_connections.end()) {
-        m_udp_connections.erase(i);
-    }
-
-    this->handler.func(this->handler.arg, SERVER_EVENT_CONNECTION_CLOSED, &id);
-}
-
-void DirectUpstream::close_connection(uint64_t id, bool graceful, bool async) {
-    if (!async) {
-        close_connection(id, graceful);
-        return;
-    }
-
-    struct CloseCtx {
-        DirectUpstream *upstream;
-        uint64_t id;
-        bool graceful;
-    };
-
-    Connection *conn = nullptr;
-    if (auto i = m_tcp_connections.find(id); i != m_tcp_connections.end()) {
-        conn = &i->second;
-    } else if (auto i = m_udp_connections.find(id); i != m_udp_connections.end()) {
-        conn = &i->second;
+    } else if (auto udp_iter = m_udp_connections.find(id); udp_iter != m_udp_connections.end()) {
+        m_udp_connections.erase(udp_iter);
     } else {
-        this->handler.func(this->handler.arg, SERVER_EVENT_CONNECTION_CLOSED, &id);
-        return;
+        present = false;
     }
 
-    conn->close_task_id = event_loop::submit(vpn->parameters.ev_loop,
-            {
-                    new CloseCtx{this, id, graceful},
-                    [](void *arg, TaskId) {
-                        auto *ctx = (CloseCtx *) arg;
-                        ctx->upstream->close_connection(ctx->id, ctx->graceful);
-                    },
-                    [](void *arg) {
-                        delete (CloseCtx *) arg;
-                    },
-            });
+    if (present) {
+        this->handler.func(this->handler.arg, SERVER_EVENT_CONNECTION_CLOSED, &id);
+    }
 }
 
 ssize_t DirectUpstream::send(uint64_t id, const uint8_t *data, size_t length) {
     VpnError error = {};
 
-    if (auto i = m_tcp_connections.find(id); i != m_tcp_connections.end()) {
-        TcpConnection *conn = &i->second;
+    if (auto tcp_iter = m_tcp_connections.find(id); tcp_iter != m_tcp_connections.end()) {
+        TcpConnection *conn = &tcp_iter->second;
         error = tcp_socket_write(conn->socket.get(), data, length);
-    } else if (auto i = m_udp_connections.find(id); i != m_udp_connections.end()) {
-        UdpConnection *conn = &i->second;
+    } else if (auto udp_iter = m_udp_connections.find(id); udp_iter != m_udp_connections.end()) {
+        UdpConnection *conn = &udp_iter->second;
         error = udp_socket_write(conn->socket.get(), data, length);
     } else {
         log_conn(this, id, dbg, "Not found");
     }
 
     if (error.code == 0) {
-        return length;
+        return ssize_t(length);
     }
 
     log_conn(this, id, dbg, "Failed to send data: {} ({})", safe_to_string_view(error.text), error.code);
@@ -435,8 +390,7 @@ void DirectUpstream::on_icmp_request(IcmpEchoRequestEvent &event) {
     sockaddr_storage peer = event.request.peer;
     sockaddr_set_port((sockaddr *) &peer, ICMP_PING_EMULATION_PORT);
     TcpSocketConnectParameters param = {
-            .connect_by = TCP_SOCKET_CB_ADDR,
-            .by_addr = {.addr = (sockaddr *) &peer},
+            .peer = (sockaddr *) &peer,
     };
     if (0 != tcp_socket_connect(sock.get(), &param).code) {
         event.result = -1;
@@ -540,19 +494,32 @@ void DirectUpstream::icmp_socket_handler(void *arg, TcpSocketEvent what, void *d
     case TCP_SOCKET_EVENT_SENT:
     case TCP_SOCKET_EVENT_WRITE_FLUSH:
         log_upstream(self, dbg, "Unexpected event: {}", magic_enum::enum_name(what));
-        assert(0);
         reply = ctx->make_reply_template();
         if (reply->peer.ss_family == AF_INET) {
             update_reply_on_error_v4(reply.value(), ag::utils::AG_ECONNREFUSED);
         } else {
             update_reply_on_error_v6(reply.value(), ag::utils::AG_ECONNREFUSED);
         }
+        assert(0);
         break;
     }
 
     if (reply.has_value()) {
         self->handler.func(self->handler.arg, SERVER_EVENT_ECHO_REPLY, &reply);
         self->cancel_icmp_request(ctx->key, ctx->seqno);
+    }
+}
+
+void DirectUpstream::on_async_task(void *arg, TaskId) {
+    auto *self = (DirectUpstream *) arg;
+    self->m_async_task.release();
+
+    for (auto [conn_id, graceful] : std::exchange(self->m_closing_connections, {})) {
+        self->close_connection(conn_id, graceful, false);
+    }
+
+    for (uint64_t conn_id : std::exchange(self->m_opening_connections, {})) {
+        self->handler.func(self->handler.arg, SERVER_EVENT_CONNECTION_OPENED, &conn_id);
     }
 }
 

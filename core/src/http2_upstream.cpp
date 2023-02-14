@@ -450,20 +450,10 @@ bool Http2Upstream::open_session(std::optional<Millis> timeout) {
         return false;
     }
 
-    TcpSocketConnectParameters param = {};
-    if (config->endpoint->address.ss_family != AF_UNSPEC) {
-        param = {
-                .connect_by = TCP_SOCKET_CB_ADDR,
-                .by_addr = {(sockaddr *) &config->endpoint->address},
-                .ssl = ssl.release(),
-        };
-    } else {
-        param = {
-                .connect_by = TCP_SOCKET_CB_HOSTNAME,
-                .by_name = {this->vpn->parameters.dns_base, config->endpoint->name, DEFAULT_PORT},
-                .ssl = ssl.release(),
-        };
-    }
+    TcpSocketConnectParameters param = {
+            .peer = (sockaddr *) &config->endpoint->address,
+            .ssl = ssl.release(),
+    };
 
     VpnError error = tcp_socket_connect(m_socket.get(), &param);
     if (error.code != 0) {
@@ -766,10 +756,14 @@ void Http2Upstream::update_flow_control(uint64_t id, TcpFlowCtrlInfo info) {
         if (conn->flags.test(TcpConnection::TCF_READ_ENABLED) && !conn->complete_read_task_id.has_value()
                 && conn->unread_data != nullptr && conn->unread_data->size() > 0) {
             // we have some unread data on the connection - complete it
-            conn->complete_read_task_id =
-                    event_loop::submit(vpn->parameters.ev_loop, {new CompleteCtx{this, id}, complete_read, [](void *arg) {
-                                                             delete (CompleteCtx *) arg;
-                                                         }});
+            conn->complete_read_task_id = event_loop::submit(vpn->parameters.ev_loop,
+                    {
+                            new CompleteCtx{this, id},
+                            complete_read,
+                            [](void *arg) {
+                                delete (CompleteCtx *) arg;
+                            },
+                    });
         }
     } else if (m_udp_mux.check_connection(id)) {
         m_udp_mux.set_read_enabled(id, info.send_buffer_size > 0);

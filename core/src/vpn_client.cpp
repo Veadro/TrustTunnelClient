@@ -26,7 +26,6 @@
 namespace ag {
 
 static std::atomic_int g_next_id = 0;
-static constexpr std::string_view DNS_PROXY_CHECK_DOMAIN = "ipv4only.arpa";
 
 using namespace std::chrono;
 
@@ -205,6 +204,13 @@ static void vpn_upstream_handler(void *arg, ServerEvent what, void *data) {
 
 static void direct_upstream_handler(void *arg, ServerEvent what, void *data) {
     auto *vpn = (VpnClient *) arg;
+
+    if (what == SERVER_EVENT_SESSION_OPENED) {
+        vpn->bypass_upstream_session_opened = true;
+    } else if (what == SERVER_EVENT_SESSION_CLOSED) {
+        vpn->bypass_upstream_session_opened = false;
+    }
+
     vpn->tunnel->upstream_handler(vpn->bypass_upstream.get(), what, data);
 }
 
@@ -221,6 +227,7 @@ static void dns_proxy_listener_handler(void *arg, ClientEvent what, void *data) 
 static void dns_resolver_handler(void *arg, VpnDnsResolveId, VpnDnsResolverResult result) {
     auto *self = (VpnClient *) arg;
 
+    self->dns_health_check_id.reset();
     if (std::holds_alternative<VpnDnsResolverSuccess>(result)) {
         log_client(self, dbg, "DNS resolver health check succeeded");
     } else if (self->fsm.get_state() != vpn_client::S_CONNECTED) {
@@ -360,7 +367,7 @@ static VpnError start_dns_proxy(VpnClient *self) {
     }
 
     self->dns_proxy = std::make_unique<DnsProxyAccessor>(DnsProxyAccessor::Parameters{
-            .resolver_address = self->listener_config.dns_upstream,
+            .upstreams = {{.address = self->listener_config.dns_upstream}},
             .socks_listener_address = ((SocksListener &) *self->dns_proxy_listener).get_listen_address(),
             .cert_verify_handler = self->parameters.cert_verify_handler,
             .ipv6_available = self->ipv6_available,
@@ -406,6 +413,11 @@ VpnError VpnClient::connect(vpn_client::EndpointConnectionConfig config, std::op
 
     error = client_connect(this, timeout);
     if (error.code != VPN_EC_NOERROR) {
+        goto fail;
+    }
+
+    if (!this->bypass_upstream->open_session()) {
+        error.text = "Failed to start upstream for direct connections";
         goto fail;
     }
 
@@ -516,6 +528,7 @@ void VpnClient::finalize_disconnect() {
 
     if (this->bypass_upstream != nullptr) {
         this->bypass_upstream->close_session();
+        this->bypass_upstream_session_opened = false;
     }
 
     if (this->tunnel != nullptr) {
@@ -585,10 +598,9 @@ void VpnClient::do_health_check() {
 }
 
 bool VpnClient::do_dns_upstream_health_check() {
-    return this->tunnel->dns_resolver
-            ->resolve(VDRQ_FOREGROUND, std::string(DNS_PROXY_CHECK_DOMAIN), 1 << dns_utils::RT_A,
-                    {dns_resolver_handler, this})
-            .has_value();
+    this->dns_health_check_id = this->tunnel->dns_resolver->resolve(VDRQ_FOREGROUND,
+            std::string(dns_health_check_domain()), 1 << dns_utils::RT_A, {dns_resolver_handler, this});
+    return this->dns_health_check_id.has_value();
 }
 
 VpnConnectionStats VpnClient::get_connection_stats() const {
@@ -610,6 +622,14 @@ std::unique_ptr<DataBuffer> VpnClient::make_buffer(uint64_t id) const {
 int VpnClient::next_upstream_id() {
     static std::atomic_int next_upstream_id = 0;
     return next_upstream_id.fetch_add(1, std::memory_order_relaxed);
+}
+
+std::string_view VpnClient::dns_health_check_domain() {
+    return "ipv4only.arpa";
+}
+
+bool VpnClient::drop_non_app_initiated_dns_queries() const {
+    return this->kill_switch_on && this->fsm.get_state() != vpn_client::S_CONNECTED;
 }
 
 bool VpnClient::may_send_icmp_request() const {
@@ -664,9 +684,8 @@ void VpnClient::handle_wake() {
     log_client(this, dbg, "Done");
 }
 
-std::optional<VpnConnectAction> VpnClient::finalize_connect_action(
-        ConnectRequestResult &request_result, bool only_app_initiated_dns) const {
-    return this->tunnel->finalize_connect_action(request_result, only_app_initiated_dns);
+std::optional<VpnConnectAction> VpnClient::finalize_connect_action(ConnectRequestResult request_result) const {
+    return this->tunnel->finalize_connect_action(std::move(request_result));
 }
 
 // NOLINT(readability-make-member-function-const)

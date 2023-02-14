@@ -5,7 +5,6 @@
 
 #include "vpn/platform.h" // Unbreak Windows builddows
 
-#include <event2/dns.h>
 #include <openssl/ssl.h>
 
 #include "common/defs.h"
@@ -60,28 +59,8 @@ typedef struct {
 #endif                  // _WIN32
 } TcpSocketParameters;
 
-typedef enum {
-    TCP_SOCKET_CB_ADDR,     // connect by address
-    TCP_SOCKET_CB_HOSTNAME, // connect by host name and port
-} TcpSocketConnectBy;
-
 typedef struct {
-    TcpSocketConnectBy connect_by;
-
-    union {
-        // TCP_SOCKET_CB_ADDR
-        struct {
-            const struct sockaddr *addr; // should be null if `tcp_socket_acquire_fd` was called before
-        } by_addr;
-
-        // TCP_SOCKET_CB_HOSTNAME
-        struct {
-            struct evdns_base *dns_base;
-            const char *host;
-            int port;
-        } by_name;
-    };
-
+    const sockaddr *peer; // should be null if `tcp_socket_acquire_fd` was called before
     SSL *ssl; // SSL context in case of the traffic needs to be encrypted (should be null if `socket_acquire_ssl` was
               // called before)
 } TcpSocketConnectParameters;

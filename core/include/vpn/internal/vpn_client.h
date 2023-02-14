@@ -5,7 +5,6 @@
 #include <optional>
 #include <set>
 #include <string>
-#include <vector>
 
 #include "common/defs.h"
 #include "common/logger.h"
@@ -24,6 +23,7 @@
 #include "vpn/internal/server_upstream.h"
 #include "vpn/internal/tunnel.h"
 #include "vpn/internal/utils.h"
+#include "vpn/internal/vpn_dns_resolver.h"
 #include "vpn/vpn.h"
 
 namespace ag {
@@ -51,7 +51,6 @@ struct Handler {
 
 struct Parameters {
     VpnEventLoop *ev_loop = nullptr;
-    evdns_base *dns_base = nullptr;
     VpnNetworkManager *network_manager = nullptr;
     Handler handler = {};
     CertVerifyHandler cert_verify_handler = {};
@@ -97,8 +96,7 @@ public:
 
     void process_client_packets(VpnPackets packets);
 
-    std::optional<VpnConnectAction> finalize_connect_action(
-            ConnectRequestResult &request_result, bool only_app_initiated_dns) const;
+    std::optional<VpnConnectAction> finalize_connect_action(ConnectRequestResult request_result) const;
 
     void complete_connect_request(uint64_t id, std::optional<VpnConnectAction> action);
 
@@ -128,6 +126,10 @@ public:
 
     [[nodiscard]] static int next_upstream_id();
 
+    [[nodiscard]] static std::string_view dns_health_check_domain();
+
+    [[nodiscard]] bool drop_non_app_initiated_dns_queries() const;
+
     Fsm fsm;
     std::unique_ptr<Tunnel> tunnel = std::make_unique<Tunnel>(); // tunnel connections manager
     vpn_client::Parameters parameters = {};
@@ -142,6 +144,7 @@ public:
     IdGenerator listener_conn_id_generator{};           // connection id generator for client-side connections
     IdGenerator upstream_conn_id_generator{};           // connection id generator for server-side connections
     std::unique_ptr<DnsProxyAccessor> dns_proxy;        // DNS proxy wrapper
+    std::optional<VpnDnsResolveId> dns_health_check_id; // ID of the resolve for a DNS upstream health check
     DomainFilter domain_filter;                         // decides if connection should be bypassed over VPN
     std::set<event_loop::AutoTaskId> deferred_tasks;
     std::unique_ptr<EndpointConnector> endpoint_connector; // connects to endpoint using given upstream(s)
@@ -153,6 +156,7 @@ public:
     int id = 0;
     std::optional<VpnError> pending_error;
     sockaddr_storage socks_listener_address{}; // The address the SOCKS listener is bound to
+    bool bypass_upstream_session_opened = false;
     bool in_disconnect = false;
 };
 

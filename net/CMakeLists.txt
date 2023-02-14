@@ -58,6 +58,8 @@ if (NOT MSVC)
     target_compile_options(vpnlibs_net PRIVATE
             -Wno-unknown-warning-option -Wno-macro-redefined -Wno-unused-parameter
             -Wno-missing-field-initializers -Wno-c99-designator)
+else()
+    target_include_directories(vpnlibs_net PRIVATE ${THIRD_PARTY_DIR}/wintun/include)
 endif()
 target_include_directories(vpnlibs_net PUBLIC include)
 
@@ -68,18 +70,12 @@ target_link_libraries(vpnlibs_net CONAN_PKG::libevent CONAN_PKG::quiche CONAN_PK
 if (WIN32)
     target_link_libraries(vpnlibs_net BCrypt) # Quiche requirement
     target_link_libraries(vpnlibs_net Fwpuclnt) # WFP firewall
-endif()
-
-if (APPLE)
-    target_link_libraries(vpnlibs_net "-framework CoreFoundation" "-framework Security")
-endif ()
-if (MSVC)
-    target_link_libraries(vpnlibs_net "Iphlpapi.lib")
-endif ()
-
-if (WIN32)
-    target_link_libraries (vpnlibs_net wsock32 ws2_32 ntdll iphlpapi)
-    target_include_directories(vpnlibs_net PUBLIC ${THIRD_PARTY_DIR}/wintun/include)
+    target_link_libraries(vpnlibs_net wsock32 ws2_32 ntdll iphlpapi)
+else()
+    target_link_libraries(vpnlibs_net resolv)
+    if (APPLE)
+        target_link_libraries(vpnlibs_net "-framework CoreFoundation" "-framework Security")
+    endif ()
 endif()
 
 enable_testing()

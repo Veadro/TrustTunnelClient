@@ -1,15 +1,8 @@
-#include "ping.h"
-
 #ifndef _WIN32
 #include <net/if.h>
-#else
-#include <Netioapi.h>
 #endif
-
 #ifdef __MACH__
-#include <ifaddrs.h>
 #include <sys/socket.h>
-#include <sys/types.h>
 #endif
 
 #include <atomic>
@@ -17,13 +10,13 @@
 #include <chrono>
 #include <list>
 #include <string>
-#include <unordered_set>
 
 #include <event2/event.h>
 
 #include "common/logger.h"
 #include "net/os_tunnel.h"
 #include "net/utils.h"
+#include "ping.h"
 #include "vpn/utils.h"
 
 namespace ag {
@@ -32,7 +25,6 @@ static ag::Logger g_logger{"PING"}; // NOLINT(cert-err58-cpp)
 
 #define log_ping(ping_, lvl_, fmt_, ...) lvl_##log(g_logger, "[{}] " fmt_, (ping_)->id, ##__VA_ARGS__)
 
-static std::atomic<uint32_t> g_bound_if = 0;
 static std::atomic_int g_next_id;
 
 using PingClock = std::chrono::high_resolution_clock;
@@ -418,10 +410,16 @@ Ping *ping_start(const PingInfo *info, PingHandler handler) {
     DeclPtr<Ping, &ping_destroy> self{new Ping{}};
     log_ping(self, trace, "...");
 
-    assert(info->loop);
-    self->loop = info->loop;
+    if (info->loop == nullptr) {
+        log_ping(self, warn, "Invalid settings");
+        return nullptr;
+    }
+    if (handler.func == nullptr) {
+        log_ping(self, warn, "Invalid handler");
+        return nullptr;
+    }
 
-    assert(handler.func);
+    self->loop = info->loop;
     self->handler = handler;
 
     if ((self->rounds_total = info->nrounds) == 0) {
@@ -436,44 +434,13 @@ Ping *ping_start(const PingInfo *info, PingHandler handler) {
     assert(self->rounds_total > 0);
     assert(self->round_timeout_ms > 0);
 
-    std::unordered_set<uint32_t> ifs;
-#ifdef __MACH__
-    if (info->query_all_interfaces) {
-        ifaddrs *addrs = nullptr;
-        getifaddrs(&addrs);
-        for (ifaddrs *it = addrs; it; it = it->ifa_next) {
-            if (!(it->ifa_flags & IFF_UP)) {
-                continue;
-            }
-            if (it->ifa_name == nullptr || !strncmp(it->ifa_name, "lo", 2) || !strncmp(it->ifa_name, "utun", 4)
-                    || !strncmp(it->ifa_name, "tun", 3) || !strncmp(it->ifa_name, "ipsec", 5)) {
-                continue;
-            }
-            if (it->ifa_addr == nullptr
-                    || (it->ifa_addr->sa_family != AF_INET && it->ifa_addr->sa_family != AF_INET6)) {
-                continue;
-            }
-            if (it->ifa_addr->sa_family == AF_INET6) {
-                uint16_t first_group = ntohs(((uint16_t *) &((sockaddr_in6 *) it->ifa_addr)->sin6_addr)[0]);
-                // Skip interfaces without unicast and ULA addresses:
-                // 2000::/3 Global unicast
-                // fc00::/7 ULA
-                if ((first_group & ~(uint16_t(~0) >> 3)) != 0x2000 && (first_group & ~(uint16_t(~0) >> 7)) != 0xfc00) {
-                    continue;
-                }
-            }
-            uint32_t ifindex = if_nametoindex(it->ifa_name);
-            ifs.insert(ifindex);
-        }
-        freeifaddrs(addrs);
-    } else
-#endif
-    {
-        ifs.insert(g_bound_if.load(std::memory_order_relaxed));
+    constexpr uint32_t DEFAULT_IF_IDX = 0;
+    std::span<uint32_t> interfaces = info->interfaces_to_query;
+    if (interfaces.empty()) {
+        interfaces = {(uint32_t *)&DEFAULT_IF_IDX, size_t(1)};
     }
-
     for (const sockaddr_storage &addr : info->addrs) {
-        for (uint32_t bound_if : ifs) {
+        for (uint32_t bound_if : interfaces) {
             PingConn &endpoint = self->pending.emplace_back();
             endpoint.dest = addr;
             endpoint.bound_if = bound_if;
@@ -528,11 +495,5 @@ void ping_destroy(Ping *ping) {
 int ping_get_id(const Ping *ping) {
     return ping->id;
 }
-
-#ifndef _WIN32
-void ping_set_bound_if(uint32_t bound_if) {
-    g_bound_if.store(bound_if, std::memory_order_relaxed);
-}
-#endif
 
 } // namespace ag

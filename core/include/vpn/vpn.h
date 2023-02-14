@@ -627,10 +627,10 @@ typedef enum {
  */
 WIN_EXPORT VpnExclusionValidationStatus vpn_validate_exclusion(const char *text);
 
-using VpnDnsUpstreamValidationStatus = enum {
+typedef enum {
     VPN_DUVS_OK,        // an upstream is valid
     VPN_DUVS_MALFORMED, // an upstream is not valid
-};
+} VpnDnsUpstreamValidationStatus;
 
 /**
  * Check if a string as a valid DNS resolver address

@@ -1,4 +1,3 @@
-#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <unordered_map>
@@ -6,7 +5,6 @@
 
 #include <event2/util.h>
 #include <gtest/gtest.h>
-#include <magic_enum.hpp>
 
 #include "common/logger.h"
 #include "net/utils.h"
@@ -75,7 +73,12 @@ TEST_F(PingTest, Single) {
     }
 
     TestCtx test_ctx = generate_test_ctx();
-    PingInfo info = {test_ctx.loop, {addresses.data(), addresses.size()}, 500 /*ms*/, false, 1};
+    PingInfo info = {
+            .loop = test_ctx.loop,
+            .addrs = {addresses.data(), addresses.size()},
+            .timeout_ms = 500,
+            .nrounds = 1,
+    };
     test_ctx.ping.reset(ping_start(&info,
             {
                     [](void *ctx, const PingResult *result) {
@@ -129,7 +132,12 @@ TEST_F(PingTest, Timeout) {
         addresses.push_back(sockaddr_from_str(i.c_str()));
     }
 
-    PingInfo info = {test_ctx.loop, {addresses.data(), addresses.size()}, /*timeout ms*/ 500, false, 1};
+    PingInfo info = {
+            .loop = test_ctx.loop,
+            .addrs = {addresses.data(), addresses.size()},
+            .timeout_ms = 500,
+            .nrounds = 1,
+    };
     test_ctx.ping.reset(ping_start(&info,
             {
                     [](void *ctx, const PingResult *result) {
@@ -175,7 +183,11 @@ TEST_F(PingTest, Multiple) {
         sockaddr_storage addr = sockaddr_from_str(i.first.c_str());
         TestCtx &test_ctx = contexts.emplace_back(generate_test_ctx());
         PingInfo info = {
-                test_ctx.loop, {&addr, 1}, 500 /*ms (windows will refuse connection to ::1 after 2 s*/, false, 1};
+                .loop = test_ctx.loop,
+                .addrs = {&addr, 1},
+                .timeout_ms = 500, /* windows will refuse connection to ::1 after 2 s*/
+                .nrounds = 1,
+        };
         test_ctx.ping.reset(ping_start(&info,
                 {
                         [](void *ctx, const PingResult *result) {
@@ -231,7 +243,12 @@ TEST_F(PingTest, AllAddressesInvalid) {
     }
 
     TestCtx test_ctx = generate_test_ctx();
-    PingInfo info = {test_ctx.loop, {addresses.data(), addresses.size()}, 500 /*ms*/, false, 1};
+    PingInfo info = {
+            .loop = test_ctx.loop,
+            .addrs = {addresses.data(), addresses.size()},
+            .timeout_ms = 500,
+            .nrounds = 1,
+    };
     test_ctx.ping.reset(ping_start(&info,
             {
                     [](void *ctx, const PingResult *result) {
@@ -272,7 +289,12 @@ TEST_F(PingTest, DestroyInProgressPingAfterCallback) {
     }
 
     TestCtx test_ctx = generate_test_ctx();
-    PingInfo info = {test_ctx.loop, {addresses.data(), addresses.size()}, 500 /*ms*/, false, 1};
+    PingInfo info = {
+            .loop = test_ctx.loop,
+            .addrs = {addresses.data(), addresses.size()},
+            .timeout_ms = 500,
+            .nrounds = 1,
+    };
     test_ctx.ping.reset(ping_start(&info,
             {
                     [](void *ctx, const PingResult *result) {
@@ -324,7 +346,12 @@ TEST_F(PingTest, DestroyInProgressPing) {
     }
 
     TestCtx test_ctx = generate_test_ctx();
-    PingInfo info = {test_ctx.loop, {addresses.data(), addresses.size()}, 0, false, 1};
+    PingInfo info = {
+            .loop = test_ctx.loop,
+            .addrs = {addresses.data(), addresses.size()},
+            .timeout_ms = 500,
+            .nrounds = 1,
+    };
 
     event_loop::submit(test_ctx.loop,
             {
@@ -379,7 +406,12 @@ TEST_F(PingTest, MultipleRounds) {
     }
 
     TestCtxRounds test_ctx = generate_test_ctx_rounds();
-    PingInfo info = {test_ctx.loop, {addresses.data(), addresses.size()}, 5000, false, ROUNDS};
+    PingInfo info = {
+            .loop = test_ctx.loop,
+            .addrs = {addresses.data(), addresses.size()},
+            .timeout_ms = 5000,
+            .nrounds = ROUNDS,
+    };
     test_ctx.ping.reset(ping_start(&info,
             {
                     [](void *ctx, const PingResult *result) {
@@ -435,7 +467,14 @@ TEST_F(PingTest, DISABLED_QueryAllInterfaces) {
     }
 
     TestCtxRounds test_ctx = generate_test_ctx_rounds();
-    PingInfo info = {test_ctx.loop, {addresses.data(), addresses.size()}, 1000 /*ms*/, true, 1 /*rounds*/};
+    std::vector<uint32_t> interfaces = collect_operable_network_interfaces();
+    PingInfo info = {
+            .loop = test_ctx.loop,
+            .addrs = {addresses.data(), addresses.size()},
+            .timeout_ms = 500,
+            .interfaces_to_query = {interfaces.data(), interfaces.size()},
+            .nrounds = 1,
+    };
     test_ctx.ping.reset(ping_start(&info,
             {
                     [](void *ctx, const PingResult *result) {

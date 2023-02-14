@@ -1,5 +1,3 @@
-#include "net/locations_pinger.h"
-
 #include <algorithm>
 #include <cassert>
 #include <iterator>
@@ -10,6 +8,9 @@
 #include <magic_enum.hpp>
 
 #include "common/logger.h"
+#include "net/locations_pinger.h"
+#include "net/network_manager.h"
+#include "net/utils.h"
 #include "ping.h"
 #include "vpn/utils.h"
 
@@ -47,6 +48,7 @@ struct LocationsPinger {
     VpnEventLoop *loop;
     ag::Logger logger{"LOCATIONS_PINGER"};
     bool query_all_interfaces;
+    std::vector<uint32_t> interfaces;
     event_loop::AutoTaskId task_id;
     uint32_t timeout_ms;
     uint32_t rounds;
@@ -190,8 +192,9 @@ static void start_location_ping(LocationsPinger *pinger) {
             std::back_inserter(addresses), [](const VpnEndpoint &endpoint) {
                 return endpoint.address;
             });
+
     PingInfo ping_info = {pinger->loop, {addresses.data(), addresses.size()}, pinger->timeout_ms,
-            pinger->query_all_interfaces, pinger->rounds};
+            {pinger->interfaces.data(), pinger->interfaces.size()}, pinger->rounds};
     Ping *ping = ping_start(&ping_info, {ping_handler, pinger});
     pinger->locations.emplace(ping, std::move(*i));
     pinger->pending_locations.pop_front();
@@ -218,7 +221,14 @@ LocationsPinger *locations_pinger_start(
     pinger->loop = ev_loop;
 #ifdef __MACH__
     pinger->query_all_interfaces = info->query_all_interfaces;
-#endif /* __MACH__ */
+    if (info->query_all_interfaces) {
+        pinger->interfaces = collect_operable_network_interfaces();
+    } else
+#endif
+    {
+        pinger->interfaces.push_back(vpn_network_manager_get_outbound_interface());
+    }
+
     pinger->timeout_ms = info->timeout_ms;
     pinger->rounds = info->rounds;
 

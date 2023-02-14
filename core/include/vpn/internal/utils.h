@@ -13,6 +13,7 @@
 #include "common/utils.h"
 #include "net/tcp_socket.h"
 #include "net/udp_socket.h"
+#include "common/net_utils.h"
 #include "vpn/platform.h"
 #include "vpn/utils.h"
 #include "vpn/vpn.h"
@@ -182,6 +183,17 @@ using SslPtr = ag::DeclPtr<SSL, SSL_free>;
 
 std::variant<SslPtr, std::string> make_ssl(
         int (*verification_callback)(X509_STORE_CTX *, void *), void *arg, ag::U8View alpn_protos, const char *sni);
+
+constexpr std::optional<utils::TransportProtocol> ipproto_to_transport_protocol(int ipproto) {
+    switch (ipproto) {
+    case IPPROTO_UDP:
+        return utils::TP_UDP;
+    case IPPROTO_TCP:
+        return utils::TP_TCP;
+    default:
+        return std::nullopt;
+    }
+}
 
 } // namespace ag
 

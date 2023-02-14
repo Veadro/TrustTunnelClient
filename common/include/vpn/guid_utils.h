@@ -1,6 +1,9 @@
 #pragma once
 
-#include "vpn/utils.h"
+#include <optional>
+#include <string>
+#include <string_view>
+
 #include <guiddef.h>
 
 namespace ag {

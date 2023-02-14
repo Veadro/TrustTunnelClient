@@ -4,12 +4,6 @@
 #include <openssl/sha.h>
 #include <unordered_set>
 
-#include "common/utils.h"
-#include "net/os_tunnel.h"
-#include "vpn/guid_utils.h"
-
-#include <fmt/ranges.h>
-
 #include <WS2tcpip.h>
 #include <iphlpapi.h>
 #include <mstcpip.h>
@@ -17,6 +11,11 @@
 #include <winsock2.h>
 #include <winternl.h>
 #include <ws2ipdef.h>
+
+#include "common/utils.h"
+#include "net/network_manager.h"
+#include "net/os_tunnel.h"
+#include "vpn/guid_utils.h"
 
 // Need to link with Iphlpapi.lib and Ws2_32.lib
 #pragma comment(lib, "iphlpapi.lib")
@@ -39,14 +38,10 @@ static WINTUN_SEND_PACKET_FUNC *WintunSendPacket;
 
 static const ag::Logger logger("OS_TUNNEL_WIN");
 
-static std::atomic<uint32_t> g_win_bound_if = 0;
-
 static constexpr std::string_view WINREG_INTERFACES_PATH_V4 =
         R"(SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces)";
 static constexpr std::string_view WINREG_INTERFACES_PATH_V6 =
         R"(SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\Interfaces)";
-static constexpr std::string_view WINREG_NETWORK_CARDS_PATH =
-        R"(SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkCards)";
 
 struct WintunThreadParams {
     WINTUN_SESSION_HANDLE session_ptr;
@@ -266,7 +261,7 @@ ag::VpnError ag::VpnWinTunnel::init(
         errlog(logger, "{}", ag::sys::strerror(ag::sys::last_error()));
         return {-1, "Unable to setup routes for wintun session"};
     }
-    return {0, "Tunnel init success"};
+    return {};
 }
 
 bool ag::VpnWinTunnel::setup_mtu() {
@@ -306,96 +301,6 @@ static DWORD set_dns_via_registry(std::string_view dns_list, std::string_view if
         RegCloseKey(current_key);
     }
     return error;
-}
-
-static DWORD get_physical_interfaces(std::unordered_set<NET_IFINDEX> &physical_ifs) {
-    HKEY current_key {};
-    char subkey[BUFSIZ];
-    DWORD error = ERROR_SUCCESS;
-    if (error = RegOpenKeyEx(HKEY_LOCAL_MACHINE, WINREG_NETWORK_CARDS_PATH.data(), 0, KEY_READ | KEY_ENUMERATE_SUB_KEYS,
-                &current_key); error == ERROR_SUCCESS) {
-        DWORD key_index = 0;
-        DWORD name_length;
-        while (RegEnumKeyEx(current_key, key_index++, subkey, &(name_length = std::size(subkey)), nullptr, nullptr, nullptr, nullptr)
-                != ERROR_NO_MORE_ITEMS) {
-            DWORD data_size = 0;
-            // get buffer size
-            RegGetValueA(current_key, subkey, TEXT("ServiceName"), RRF_RT_REG_SZ, nullptr, nullptr, &data_size);
-            std::string buffer;
-            buffer.resize(data_size);
-            auto get_value_result = RegGetValueA(
-                    current_key, subkey, TEXT("ServiceName"), RRF_RT_REG_SZ, nullptr, buffer.data(), &data_size);
-            if (get_value_result == ERROR_SUCCESS) {
-                buffer.resize(data_size - 1);
-                if (auto guid = ag::string_to_guid(buffer); guid.has_value()) {
-                    NET_LUID luid{};
-                    NET_IFINDEX index = 0;
-                    ConvertInterfaceGuidToLuid(&guid.value(), &luid);
-                    ConvertInterfaceLuidToIndex(&luid, &index);
-                    physical_ifs.insert(index);
-                }
-            } else {
-                // Single error in previous operation is not critical for obtaining list of interfaces
-                dbglog(logger, "RegGetValueA failed for key index {} with result: {}", key_index - 1,
-                        ag::sys::strerror(get_value_result));
-            }
-        }
-        RegCloseKey(current_key);
-    }
-    dbglog(logger, "Physical interfaces: {}", physical_ifs);
-    return error;
-}
-
-static DWORD get_default_route_ifs(
-        std::unordered_set<NET_IFINDEX> &net_ifs_v4, std::unordered_set<NET_IFINDEX> &net_ifs_v6) {
-    PMIB_IPFORWARD_TABLE2 table_v4{};
-    PMIB_IPFORWARD_TABLE2 table_v6{};
-    DWORD error = ERROR_SUCCESS;
-    if (error = GetIpForwardTable2(AF_INET, &table_v4); error != ERROR_SUCCESS) {
-        errlog(logger, "Ipv4 GetIpForwardTable2(): {}", ag::sys::strerror(error));
-        return error;
-    }
-    if (error = GetIpForwardTable2(AF_INET6, &table_v6); error != ERROR_SUCCESS) {
-        errlog(logger, "Ipv6 GetIpForwardTable2(): {}", ag::sys::strerror(error));
-        return error;
-    }
-    for (size_t i = 0; i < table_v4->NumEntries; i++) {
-        if ((ag::sockaddr_is_any((SOCKADDR *) &table_v4->Table[i].DestinationPrefix.Prefix.Ipv4))
-                && (table_v4->Table[i].SitePrefixLength == 0)) {
-            net_ifs_v4.insert(table_v4->Table[i].InterfaceIndex);
-        }
-    }
-    for (size_t i = 0; i < table_v6->NumEntries; i++) {
-        if ((ag::sockaddr_is_any((SOCKADDR *) &table_v6->Table[i].DestinationPrefix.Prefix.Ipv6))
-                && (table_v6->Table[i].SitePrefixLength == 0)) {
-            net_ifs_v6.insert(table_v6->Table[i].InterfaceIndex);
-        }
-    }
-    dbglog(logger, "Default route interfaces: ipv4 = {}, ipv6 = {}", net_ifs_v4, net_ifs_v6);
-    return error;
-}
-
-/// return interface with minimal metric: <index, min_metric>
-static std::pair<uint32_t, uint32_t> get_min_metric_if(std::unordered_set<NET_IFINDEX> &net_ifs, bool ipv6 = false) {
-    auto ip_family = AF_INET;
-    if (ipv6) {
-        ip_family = AF_INET6;
-    }
-    uint32_t result_idx = 0;
-    uint32_t min_metric = NL_MAX_METRIC_COMPONENT;
-    for (const auto &index : net_ifs) {
-        MIB_IPINTERFACE_ROW row;
-        InitializeIpInterfaceEntry(&row);
-        row.Family = ip_family;
-        row.InterfaceIndex = index;
-        if (DWORD error = GetIpInterfaceEntry(&row); error != ERROR_SUCCESS) {
-            errlog(logger, "GetIpInterfaceEntry(): {}", ag::sys::strerror(error));
-        } else if (row.Connected && row.Metric < min_metric) {
-            result_idx = row.InterfaceIndex;
-            min_metric = row.Metric;
-        }
-    }
-    return {result_idx, min_metric};
 }
 
 bool ag::VpnWinTunnel::setup_dns() {
@@ -439,6 +344,11 @@ bool ag::VpnWinTunnel::setup_dns() {
         errlog(logger, "Failed to restrict DNS traffic: {}", error->str());
         return false;
     }
+
+    vpn_network_manager_update_tun_interface_dns({
+            .data = m_win_settings->dns_servers.data,
+            .size = m_win_settings->dns_servers.size,
+    });
 
     return true;
 }
@@ -541,52 +451,8 @@ void ag::vpn_win_tunnel_destroy(void *win_tunnel) {
     delete (VpnWinTunnel *) win_tunnel;
 }
 
-uint32_t ag::vpn_win_detect_active_if() {
-    // first find physical network cards interfaces
-    std::unordered_set<NET_IFINDEX> physical_ifs;
-    DWORD error = get_physical_interfaces(physical_ifs);
-    if (physical_ifs.empty()) {
-        SetLastError(error);
-        errlog(logger, "get_physical_interfaces: {}", ag::sys::strerror(error));
-        return 0;
-    }
-    // get interfaces with default route from routing table
-    std::unordered_set<NET_IFINDEX> net_ifs_v4;
-    std::unordered_set<NET_IFINDEX> net_ifs_v6;
-    error = get_default_route_ifs(net_ifs_v4, net_ifs_v6);
-    if (error != ERROR_SUCCESS) {
-        SetLastError(error);
-        errlog(logger, "get_default_route_ifs: {}", ag::sys::strerror(error));
-        return 0;
-    }
-    // exclude non-physical interfaces
-    std::erase_if(net_ifs_v4, [&](auto net_if) {
-        return !physical_ifs.contains(net_if);
-    });
-    std::erase_if(net_ifs_v6, [&](auto net_if) {
-        return !physical_ifs.contains(net_if);
-    });
-
-    // Then choose operational one with minimal metric
-    // handle ipv4
-    auto [index_v4, min_metric_v4] = get_min_metric_if(net_ifs_v4, false);
-    dbglog(logger, "min_metric_v4 = {} with if_index = {}", min_metric_v4, index_v4);
-    // handle ipv6
-    auto [index_v6, min_metric_v6] = get_min_metric_if(net_ifs_v6, true);
-    dbglog(logger, "min_metric_v6 = {} with if_index = {}", min_metric_v6, index_v6);
-    // both checks failed
-    if (min_metric_v4 == min_metric_v6 && min_metric_v4 == NL_MAX_METRIC_COMPONENT) {
-        errlog(logger, "Both metric checks failed");
-        return 0;
-    }
-    if (min_metric_v4 < min_metric_v6) {
-        return index_v4;
-    }
-    return index_v6;
-}
-
 bool ag::vpn_win_socket_protect(evutil_socket_t fd, const sockaddr *addr) {
-    uint32_t bound_if = g_win_bound_if;
+    uint32_t bound_if = vpn_network_manager_get_outbound_interface();
     if (bound_if == 0) {
         return true;
     }
@@ -653,8 +519,4 @@ bool ag::vpn_win_socket_protect(evutil_socket_t fd, const sockaddr *addr) {
         return false;
     }
     return true;
-}
-
-void ag::vpn_win_set_bound_if(uint32_t if_index) {
-    g_win_bound_if = if_index;
 }

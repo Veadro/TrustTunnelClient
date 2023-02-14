@@ -34,7 +34,8 @@ set(SOURCE_FILES
         ${VPNCORE_SRC_DIR}/single_upstream_connector.cpp
         ${VPNCORE_SRC_DIR}/fallbackable_upstream_connector.cpp
         ${VPNCORE_SRC_DIR}/icmp_manager.cpp
-        ${VPNCORE_SRC_DIR}/dns_sniffer.cpp
+        ${VPNCORE_SRC_DIR}/plain_dns_message_handler.cpp
+        ${VPNCORE_SRC_DIR}/plain_dns_manager.cpp
         ${VPNCORE_SRC_DIR}/vpn_dns_resolver.cpp
         ${VPNCORE_SRC_DIR}/vpn_connection.cpp
 )
@@ -123,6 +124,8 @@ add_unit_test(test_vpn_client_fsm "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" TRUE TR
 target_link_libraries(test_vpn_client_fsm PRIVATE vpnlibs_core)
 add_unit_test(test_vpn_client_live "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
 target_link_libraries(test_vpn_client_live PRIVATE vpnlibs_core)
+add_unit_test(test_dns_routing "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
+target_link_libraries(test_dns_routing PRIVATE vpnlibs_core)
 
 target_link_libraries(module_vpncore_mocked vpnlibs_core)
 target_include_directories(module_vpncore_mocked PUBLIC ${TEST_EXTRA_INCLUDES})

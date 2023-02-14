@@ -213,6 +213,7 @@ public:
     }
 
     DeclPtr<VpnEventLoop, &vpn_event_loop_destroy> ev_loop{vpn_event_loop_create()};
+    DeclPtr<VpnNetworkManager, &vpn_network_manager_destroy> network_manager{vpn_network_manager_get()};
     VpnClient vpn;
     Tunnel tun = {};
     sockaddr_storage src{};
@@ -247,6 +248,7 @@ public:
         dst = sockaddr_from_str("1.1.1.2:443");
 
         vpn.parameters.handler = {&vpn_handler, this};
+        vpn.parameters.network_manager = network_manager.get();
 
         vpn.endpoint_upstream = std::make_unique<TestUpstream>();
         ASSERT_TRUE(vpn.endpoint_upstream->init(&vpn, {&redirect_upstream_handler, this}));
@@ -273,7 +275,7 @@ public:
         // 2) Establish the connection through VPN endpoint
         size_t size_before = redirect_upstream->connections.size();
         ConnectRequestResult result = {client_id, VPN_CA_DEFAULT, "some", 1};
-        std::optional<VpnConnectAction> action = tun.finalize_connect_action(result, false);
+        std::optional<VpnConnectAction> action = tun.finalize_connect_action(result);
         tun.complete_connect_request(client_id, action);
         ASSERT_GT(redirect_upstream->connections.size(), size_before);
         redirect_id = redirect_upstream->connections.back();

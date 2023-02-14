@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -12,6 +13,8 @@
 #include <fmt/format.h>
 #include <openssl/x509.h>
 
+#include "common/error.h"
+#include "common/socket_address.h"
 #include "common/utils.h"
 #include "net/http_header.h"
 #include "vpn/utils.h"
@@ -102,6 +105,25 @@ struct IcmpEchoRequestEvent {
 };
 
 /**
+ * A system DNS server descriptor. Based on Windows 11 model as the most comprehensive among
+ * the supported platforms.
+ */
+struct SystemDnsServer {
+    /** URL of the DNS server. The syntax corresponds to the one used in the DNS proxy. */
+    std::string address;
+    /**
+     * The network address of the hostname from the URL in `address` field.
+     * @note The library does not check whether the address matches the hostname.
+     */
+    std::optional<SocketAddress> resolved_host;
+};
+
+struct SystemDnsServers {
+    std::vector<SystemDnsServer> main;
+    std::vector<std::string> fallback;
+};
+
+/**
  * Special message type used as a marker for dropping a pending request.
  * The value must not match any of the standard codes from
  * https://www.iana.org/assignments/icmp-parameters/icmp-parameters.xhtml.
@@ -172,14 +194,6 @@ using AutoVpnLocation = AutoPod<VpnLocation, vpn_location_destroy>;
  */
 AutoVpnLocation vpn_location_clone(const VpnLocation *src);
 
-#ifndef _WIN32
-/**
- * Set default outgoing interface for pings. 0 is "not set".
- * @param bound_if
- */
-void ping_set_bound_if(uint32_t bound_if);
-#endif
-
 /**
  * Return the length of varint-encoded value
  */
@@ -193,6 +207,73 @@ static inline size_t varint_len(uint64_t varint_value) {
     }
     return 8;
 }
+
+#ifdef __MACH__
+
+/**
+ * Collect the currently operable network interfaces
+ */
+std::vector<uint32_t> collect_operable_network_interfaces();
+
+#endif // ifdef __MACH__
+
+#ifdef _WIN32
+
+enum RetrieveInterfaceDnsError {
+    AE_ADAPTERS_ADDRESSES,
+    AE_IF_DNS_SETTINGS,
+    AE_IF_NOT_FOUND,
+    AE_LUID_TO_GUID,
+};
+
+template <>
+struct ErrorCodeToString<RetrieveInterfaceDnsError> {
+    std::string operator()(RetrieveInterfaceDnsError code) {
+        // clang-format off
+        switch (code) {
+        case AE_ADAPTERS_ADDRESSES: return "GetAdaptersAddresses()";
+        case AE_IF_DNS_SETTINGS: return "GetInterfaceDnsSettings()";
+        case AE_IF_NOT_FOUND: return "Interface not found";
+        case AE_LUID_TO_GUID: return "ConvertInterfaceLuidToGuid()";
+        }
+        // clang-format on
+    }
+};
+
+/**
+ * Retrieve DNS servers of the specified interface
+ */
+Result<SystemDnsServers, RetrieveInterfaceDnsError> retrieve_interface_dns_servers(uint32_t if_index);
+
+/**
+ * Return the network interface which is currently active.
+ * May return 0 in case it is not found.
+ */
+extern "C" WIN_EXPORT uint32_t vpn_win_detect_active_if();
+
+#elif !defined(__ANDROID__)
+
+enum RetrieveSystemDnsError {
+    AE_INIT,
+};
+
+template <>
+struct ErrorCodeToString<RetrieveSystemDnsError> {
+    std::string operator()(RetrieveSystemDnsError code) {
+        // clang-format off
+        switch (code) {
+        case AE_INIT: return "res_ninit()";
+        }
+        // clang-format on
+    }
+};
+
+/**
+ * Retrieve DNS servers
+ */
+Result<SystemDnsServers, RetrieveSystemDnsError> retrieve_system_dns_servers();
+
+#endif // ifdef _WIN32
 
 } // namespace ag
 
@@ -236,5 +317,32 @@ struct fmt::formatter<ag::VpnEndpoint> {
     auto format(const ag::VpnEndpoint &endpoint, FormatContext &ctx) {
         return fmt::format_to(
                 ctx.out(), "name={}, address={}", endpoint.name, ag::sockaddr_to_str((sockaddr *) &endpoint.address));
+    }
+};
+
+template <>
+struct fmt::formatter<ag::SystemDnsServer> {
+    template <typename ParseContext>
+    constexpr auto parse(ParseContext &ctx) {
+        return ctx.begin();
+    }
+
+    template <typename FormatContext>
+    auto format(const ag::SystemDnsServer &s, FormatContext &ctx) {
+        return fmt::format_to(ctx.out(), "address={}, resolved_host={}", s.address,
+                s.resolved_host.has_value() ? s.resolved_host->host_str() : "<none>");
+    }
+};
+
+template <>
+struct fmt::formatter<ag::SystemDnsServers> {
+    template <typename ParseContext>
+    constexpr auto parse(ParseContext &ctx) {
+        return ctx.begin();
+    }
+
+    template <typename FormatContext>
+    auto format(const ag::SystemDnsServers &s, FormatContext &ctx) {
+        return fmt::format_to(ctx.out(), "main=[{}], fallback={}", fmt::join(s.main, "; "), s.fallback);
     }
 };

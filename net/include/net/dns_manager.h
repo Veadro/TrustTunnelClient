@@ -1,14 +1,31 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
-#include <event2/dns.h>
-#include <event2/event.h>
+#include "net/utils.h"
+#include "vpn/event_loop.h"
 
 namespace ag {
 
 struct DnsManager;
+using DnsChangeSubscriptionId = uint32_t;
+
+enum DnsManagerServersKind {
+    /**
+     * The original system DNS servers
+     */
+    DMSK_SYSTEM,
+    /**
+     * The servers set to the virtual TUN interface set up by an application.
+     * Needed to distinct the DNS queries routed to the default peer from the queries
+     * routed to arbitrary ones.
+     */
+    DMSK_TUN_INTERFACE,
+};
+
+using DnsChangeNotification = void (*)(void *arg, DnsManagerServersKind);
 
 /**
  * Create a DNS manager
@@ -22,25 +39,39 @@ void dns_manager_destroy(DnsManager *manager);
 
 /**
  * Set DNS servers to be used by the manager
- * @param manager DNS manager
- * @param servers DNS servers
+ * @param servers the servers
  * @return true if set successfully, false otherwise
  */
-bool dns_manager_set_servers(DnsManager *manager, std::vector<std::string> servers);
+bool dns_manager_set_system_servers(DnsManager *manager, SystemDnsServers servers);
 
 /**
- * Create a DNS base for domain names resolving
- * @param manager DNS manager
- * @param base event loop of the DNS base
- * @return DNS base, or null if failed
+ * Set DNS servers set to tunnel interface
+ * @param servers the servers
+ * @return true if set successfully, false otherwise
  */
-struct evdns_base *dns_manager_create_base(DnsManager *manager, struct event_base *base);
+bool dns_manager_set_tunnel_interface_servers(DnsManager *manager, std::vector<std::string> servers);
 
 /**
- * Delete a DNS base
- * @param manager DNS manager
- * @param base DNS base
+ * Get the system DNS servers used by the manager
  */
-void dns_manager_delete_base(DnsManager *manager, struct evdns_base *base);
+SystemDnsServers dns_manager_get_system_servers(const DnsManager *manager);
+
+/**
+ * Get the tunnel interface DNS servers used by the manager
+ */
+std::vector<std::string> dns_manager_get_tunnel_interface_servers(const DnsManager *manager);
+
+/**
+ * Subscribe to DNS servers change event.
+ * The `notification` is raised through the `event_loop`.
+ * @return Subscription ID in case subscribed successfully
+ */
+DnsChangeSubscriptionId dns_manager_subscribe_servers_change(
+        DnsManager *manager, VpnEventLoop *event_loop, DnsChangeNotification notification, void *notification_arg);
+
+/**
+ * Cancel the DNS servers change subscription
+ */
+void dns_manager_unsubscribe_servers_change(DnsManager *manager, DnsChangeSubscriptionId subscription_id);
 
 } // namespace ag

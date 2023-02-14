@@ -1,7 +1,11 @@
 #pragma once
 
-#include <event2/buffer.h>
+#include <memory>
 #include <span>
+#include <string>
+#include <vector>
+
+#include <event2/buffer.h>
 
 #include <common/cidr_range.h>
 #include <vpn/utils.h>
@@ -76,23 +80,10 @@ WIN_EXPORT void *vpn_win_tunnel_create(VpnOsTunnelSettings *settings, VpnWinTunn
 WIN_EXPORT void vpn_win_tunnel_destroy(void *win_tunnel);
 /**
  * This function must be used in ping_handler and vpn_handler when tunnel is on.
- * Does nothing if `vpn_win_set_bound_if()` was not previously called, or it was
- * called with 0.
+ * Does nothing if `vpn_network_manager_set_outbound_interface()` was not previously called,
+ * or it was called with 0.
  */
 WIN_EXPORT bool vpn_win_socket_protect(evutil_socket_t fd, const sockaddr *addr);
-/**
- * Return the network interface which is currently active.
- * May return 0 in case it is not found.
- */
-WIN_EXPORT uint32_t vpn_win_detect_active_if();
-/**
- * Sets outbound interface that will be used inside `vpn_win_socket_protect()`.
- * The interface may be found with `vpn_win_detect_active_if()`.
- * @param if_index if >0, the library sets it as is
- *                 if =0, the library turns off the socket protection
- *                 (i.e. `vpn_win_socket_protect()` will not actually do anything)
- */
-WIN_EXPORT void vpn_win_set_bound_if(uint32_t if_index);
 
 #endif
 

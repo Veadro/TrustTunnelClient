@@ -159,8 +159,9 @@ void DomainFilter::add_resolved_tag(SockAddrTag tag, std::string domain) {
 }
 
 void DomainFilter::add_exclusion_suspect(const sockaddr_storage &addr, std::chrono::seconds ttl) {
-    log_filter(this, dbg, "{} / {}", sockaddr_ip_to_str((sockaddr *) &addr), (int64_t) ttl.count());
+    log_filter(this, dbg, "{} / {}", sockaddr_ip_to_str((sockaddr *) &addr), ttl);
 
+    // @todo: fix TTL reduction caused by overwriting it by an entry with a smaller TTL
     m_exclusion_suspects.insert(addr, 0, ttl);
 }
 

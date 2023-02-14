@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include "direct_upstream.h"
+#include "plain_dns_manager.h"
 #include "socks_listener.h"
 #include "upstream_multiplexer.h"
 #include "vpn/internal/vpn_client.h"
@@ -119,13 +120,13 @@ void DirectUpstream::tcp_socket_handler(void *, TcpSocketEvent, void *) {
 }
 void DirectUpstream::udp_socket_handler(void *, UdpSocketEvent, void *) {
 }
-uint64_t DirectUpstream::open_tcp_connection(const TunnelAddressPair *) {
+void DirectUpstream::on_async_task(void *, TaskId) {
+}
+uint64_t DirectUpstream::open_tcp_connection(const sockaddr_storage &) {
     return 0;
 }
-uint64_t DirectUpstream::open_udp_connection(const TunnelAddressPair *) {
+uint64_t DirectUpstream::open_udp_connection(const sockaddr_storage &) {
     return 0;
-}
-void DirectUpstream::close_connection(uint64_t, bool) {
 }
 void DirectUpstream::on_icmp_request(IcmpEchoRequestEvent &) {
 }
@@ -252,7 +253,7 @@ void Tunnel::reset_connections(ClientListener *) {
 }
 void Tunnel::reset_connection(uint64_t) {
 }
-std::optional<VpnConnectAction> Tunnel::finalize_connect_action(ConnectRequestResult &request_result, bool) const {
+std::optional<VpnConnectAction> Tunnel::finalize_connect_action(ConnectRequestResult request_result) const {
     return request_result.action;
 }
 void Tunnel::on_before_endpoint_disconnect(ServerUpstream *) {

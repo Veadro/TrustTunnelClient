@@ -1,14 +1,18 @@
 #pragma once
 
-#include <chrono>
+#include <map>
 #include <memory>
+#include <optional>
+#include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "common/logger.h"
 #include "net/tcp_socket.h"
 #include "net/udp_socket.h"
 #include "vpn/internal/server_upstream.h"
+#include "vpn/internal/utils.h"
 
 namespace ag {
 
@@ -28,7 +32,6 @@ public:
 private:
     struct Connection {
         std::unique_ptr<SocketContext> sock_ctx;
-        event_loop::AutoTaskId close_task_id;
     };
 
     struct TcpConnection : public Connection {
@@ -38,13 +41,15 @@ private:
     struct UdpConnection : public Connection {
         UdpSocketPtr socket;
         bool read_enabled = false;
-        event_loop::AutoTaskId open_task_id;
     };
 
     struct IcmpRequestInfo;
 
     std::unordered_map<uint64_t, TcpConnection> m_tcp_connections;
     std::unordered_map<uint64_t, UdpConnection> m_udp_connections;
+    std::unordered_set<uint64_t> m_opening_connections;
+    std::unordered_map<uint64_t, /* graceful */ bool> m_closing_connections;
+    event_loop::AutoTaskId m_async_task;
     std::map<IcmpRequestKey, std::unique_ptr<IcmpRequestInfo>> m_icmp_requests;
 
     ag::Logger m_log{"DIRECT_UPSTREAM"};
@@ -66,11 +71,12 @@ private:
     static void tcp_socket_handler(void *arg, TcpSocketEvent what, void *data);
     static void udp_socket_handler(void *arg, UdpSocketEvent what, void *data);
     static void icmp_socket_handler(void *arg, TcpSocketEvent what, void *data);
+    static void on_async_task(void *arg, TaskId);
 
-    uint64_t open_tcp_connection(const TunnelAddressPair *addr);
-    uint64_t open_udp_connection(const TunnelAddressPair *addr);
-    void close_connection(uint64_t id, bool graceful);
+    uint64_t open_tcp_connection(const sockaddr_storage &peer);
+    uint64_t open_udp_connection(const sockaddr_storage &peer);
     void cancel_icmp_request(const IcmpRequestKey &key, uint16_t seqno);
+    void update_system_dns_redirect_peers(std::span<std::string> servers);
 };
 
 } // namespace ag

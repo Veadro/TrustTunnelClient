@@ -1,8 +1,13 @@
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "common/utils.h"
 #include "vpn/platform.h"
+
+#ifdef _WIN32
+#include <winver.h>
+#endif
 
 namespace ag::sys {
 
@@ -38,6 +43,37 @@ const char *strerror(int code) {
     std::memcpy(buffer, str.data(), len);
     buffer[len] = '\0';
     return buffer;
+}
+
+bool is_windows_11_or_greater() {
+    constexpr DWORD WIN11_MAJOR_VERSION = HIBYTE(_WIN32_WINNT_WIN10);
+    constexpr DWORD WIN11_MINOR_VERSION = LOBYTE(_WIN32_WINNT_WIN10);
+    constexpr DWORD FIRST_WIN11_BUILD_NUMBER = 22000;
+    constexpr const wchar_t *SYSTEM = L"kernel32.dll";
+
+    DWORD dummy;
+    DWORD file_ver_buffer_size = GetFileVersionInfoSizeExW(FILE_VER_GET_NEUTRAL, SYSTEM, &dummy);
+    if (file_ver_buffer_size <= 0) {
+        return false;
+    }
+
+    std::vector<uint8_t> file_ver_buffer(file_ver_buffer_size);
+    if (!GetFileVersionInfoExW(FILE_VER_GET_NEUTRAL, SYSTEM, dummy, file_ver_buffer.size(), file_ver_buffer.data())) {
+        return false;
+    }
+
+    void *value = nullptr;
+    UINT value_size = 0;
+    if (!VerQueryValueW(file_ver_buffer.data(), L"\\", &value, &value_size)) {
+        return false;
+    }
+    if (value_size < sizeof(VS_FIXEDFILEINFO)) {
+        return false;
+    }
+
+    const auto *info = (VS_FIXEDFILEINFO *) value;
+    return WIN11_MAJOR_VERSION <= HIWORD(info->dwFileVersionMS) && WIN11_MINOR_VERSION <= LOWORD(info->dwFileVersionMS)
+            && FIRST_WIN11_BUILD_NUMBER <= HIWORD(info->dwFileVersionLS);
 }
 
 #endif //_WIN32

@@ -78,7 +78,6 @@ void Vpn::update_upstream_config(AutoPod<VpnUpstreamConfig, vpn_upstream_config_
 vpn_client::Parameters Vpn::make_client_parameters() const {
     return {
             this->ev_loop.get(),
-            this->dns_base,
             this->network_manager.get(),
             {client_handler, (void *) this},
             {ssl_verify_callback, (void *) this},
@@ -134,9 +133,6 @@ bool Vpn::run_event_loop() {
             log_vpn(this, err, "Failed to create event loop");
             return false;
         }
-
-        this->dns_base =
-                dns_manager_create_base(this->network_manager->dns, vpn_event_loop_get_base(this->ev_loop.get()));
     }
 
     this->executor_thread = std::thread([this]() {
@@ -373,7 +369,6 @@ void vpn_stop(Vpn *vpn) {
     vpn->pending_error.reset();
     vpn->client_state = vpn_manager::CLIS_DISCONNECTED;
     vpn->client.finalize_disconnect();
-    dns_manager_delete_base(vpn->network_manager->dns, load_and_null(vpn->dns_base));
     socket_manager_complete_all(vpn->network_manager->socket);
     vpn->stop_pinging();
     vpn->postponement_window_timer.reset();
@@ -422,8 +417,7 @@ void vpn_listener_config_destroy(VpnListenerConfig *config) {
 static void vpn_complete_connect_request_task(Vpn *vpn, ConnectRequestResult result) {
     log_vpn(vpn, dbg, "{}", result.to_string());
 
-    result.action = vpn->client.finalize_connect_action(
-            result, vpn->client.kill_switch_on && vpn->fsm.get_state() != VPN_SS_CONNECTED);
+    result.action = vpn->client.finalize_connect_action(std::move(result));
 
     vpn->fsm.perform_transition(vpn_fsm::CE_COMPLETE_REQUEST, &result);
 }

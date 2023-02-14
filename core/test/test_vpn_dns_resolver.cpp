@@ -1,3 +1,5 @@
+#include <thread>
+
 #include <gtest/gtest.h>
 
 #include "vpn/internal/vpn_client.h"
@@ -22,7 +24,7 @@ public:
     std::unique_ptr<ClientListener> resolver;
     std::vector<uint64_t> raised_connection_requests;
     std::vector<std::pair<uint64_t, std::vector<uint8_t>>> raised_reads;
-    std::vector<std::pair<VpnDnsResolveId, VpnDnsResolverResult>> raised_results;
+    std::optional<std::pair<VpnDnsResolveId, VpnDnsResolverResult>> raised_result;
 
     void SetUp() override {
         this->resolver = std::make_unique<VpnDnsResolver>();
@@ -51,7 +53,7 @@ public:
 
     static void result_handler(void *arg, VpnDnsResolveId id, VpnDnsResolverResult result) {
         auto *self = (VpnDnsResolverTest *) arg;
-        self->raised_results.emplace_back(std::make_pair(id, result));
+        self->raised_result.emplace(id, std::move(result));
     }
 
     void run_event_loop_once() { // NOLINT(readability-make-member-function-const)
@@ -106,11 +108,12 @@ TEST_F(VpnDnsResolverTest, ResultV4Only) {
 
     ASSERT_EQ(this->resolver->send(connection_id, REPLY, std::size(REPLY)), std::size(REPLY));
     this->run_event_loop_once();
-    ASSERT_EQ(this->raised_results.size(), 1);
+    ASSERT_TRUE(this->raised_result.has_value());
 
-    const auto *result = std::get_if<VpnDnsResolverSuccess>(&this->raised_results[0].second);
+    const auto *result = std::get_if<VpnDnsResolverSuccess>(&this->raised_result->second);
     ASSERT_NE(result, nullptr);
-    ASSERT_EQ(result->addr.ss_family, AF_INET);
+    ASSERT_EQ(result->addresses.size(), 1);
+    ASSERT_EQ(result->addresses[0].ss_family, AF_INET);
 }
 
 TEST_F(VpnDnsResolverTest, ResultV6Disabled) {
@@ -133,15 +136,12 @@ TEST_F(VpnDnsResolverTest, ResultV6Disabled) {
 
     ASSERT_EQ(this->resolver->send(connection_id, REPLY, std::size(REPLY)), std::size(REPLY));
     this->run_event_loop_once();
-    ASSERT_EQ(this->raised_results.size(), 2);
+    ASSERT_TRUE(this->raised_result.has_value());
 
-    const auto *failure = std::get_if<VpnDnsResolverFailure>(&this->raised_results[0].second);
-    ASSERT_NE(failure, nullptr);
-    ASSERT_EQ(failure->record_type, dns_utils::RT_AAAA);
-
-    const auto *success = std::get_if<VpnDnsResolverSuccess>(&this->raised_results[1].second);
+    const auto *success = std::get_if<VpnDnsResolverSuccess>(&this->raised_result->second);
     ASSERT_NE(success, nullptr);
-    ASSERT_EQ(success->addr.ss_family, AF_INET);
+    ASSERT_EQ(success->addresses.size(), 1);
+    ASSERT_EQ(success->addresses[0].ss_family, AF_INET);
 }
 
 TEST_F(VpnDnsResolverTest, ResultV6) {
@@ -171,15 +171,13 @@ TEST_F(VpnDnsResolverTest, ResultV6) {
     ASSERT_EQ(this->resolver->send(connection_id, A_REPLY, std::size(A_REPLY)), std::size(A_REPLY));
     ASSERT_EQ(this->resolver->send(connection_id, AAAA_REPLY, std::size(AAAA_REPLY)), std::size(AAAA_REPLY));
     this->run_event_loop_once();
-    ASSERT_EQ(this->raised_results.size(), 2);
+    ASSERT_TRUE(this->raised_result.has_value());
 
-    const auto *result = std::get_if<VpnDnsResolverSuccess>(&this->raised_results[0].second);
+    const auto *result = std::get_if<VpnDnsResolverSuccess>(&this->raised_result->second);
     ASSERT_NE(result, nullptr);
-    ASSERT_EQ(result->addr.ss_family, AF_INET);
-
-    result = std::get_if<VpnDnsResolverSuccess>(&this->raised_results[1].second);
-    ASSERT_NE(result, nullptr);
-    ASSERT_EQ(result->addr.ss_family, AF_INET6);
+    ASSERT_EQ(result->addresses.size(), 2);
+    ASSERT_EQ(result->addresses[0].ss_family, AF_INET);
+    ASSERT_EQ(result->addresses[1].ss_family, AF_INET6);
 }
 
 TEST_F(VpnDnsResolverTest, Cancel) {
@@ -205,7 +203,7 @@ TEST_F(VpnDnsResolverTest, Cancel) {
 
     ASSERT_EQ(this->resolver->send(connection_id, REPLY, std::size(REPLY)), std::size(REPLY));
     this->run_event_loop_once();
-    ASSERT_EQ(this->raised_results.size(), 0);
+    ASSERT_FALSE(this->raised_result.has_value());
 }
 
 TEST_F(VpnDnsResolverTest, BackgroundsDontBlockForegrounds) {
@@ -253,4 +251,60 @@ TEST_F(VpnDnsResolverTest, ForegroundsBlockBackgrounds) {
         ASSERT_NO_FATAL_FAILURE(initiate_resolve(VDRQ_BACKGROUND));
         ASSERT_EQ(this->raised_reads.size(), current_queries_number);
     }
+}
+
+TEST_F(VpnDnsResolverTest, QueryTimeout) {
+    VpnDnsResolver::set_query_timeout(Millis{1});
+
+    ((VpnDnsResolver *) this->resolver.get())->set_ipv6_availability(true);
+    ((VpnDnsResolver *) this->resolver.get())
+            ->resolve(VDRQ_BACKGROUND, "example.org", VpnDnsResolver::RecordTypeSet{}.set(), {result_handler, this});
+    ASSERT_EQ(this->raised_connection_requests.size(), 0);
+
+    this->run_event_loop_once();
+
+    ASSERT_EQ(this->raised_connection_requests.size(), 1);
+    uint64_t connection_id = this->raised_connection_requests[0];
+    this->resolver->complete_connect_request(connection_id, CCR_PASS);
+    this->run_event_loop_once();
+    ASSERT_EQ(this->raised_reads.size(), 2);
+
+    const uint8_t A_REPLY[] = {
+            this->raised_reads[0].second[0], this->raised_reads[0].second[1], EXAMPLE_ORG_A_REPLY_NO_ID};
+    this->raised_reads.clear();
+
+    ASSERT_EQ(this->resolver->send(connection_id, A_REPLY, std::size(A_REPLY)), std::size(A_REPLY));
+    this->run_event_loop_once();
+
+    std::this_thread::sleep_for(Secs{1});
+
+    this->run_event_loop_once();
+    ASSERT_TRUE(this->raised_result.has_value());
+    const auto *result = std::get_if<VpnDnsResolverSuccess>(&this->raised_result->second);
+    ASSERT_NE(result, nullptr);
+    ASSERT_EQ(result->addresses.size(), 1);
+    ASSERT_EQ(result->addresses[0].ss_family, AF_INET);
+}
+
+TEST_F(VpnDnsResolverTest, ConnectionTimeout) {
+    this->vpn.upstream_config.timeout = Millis{1};
+
+    ((VpnDnsResolver *) this->resolver.get())
+            ->resolve(VDRQ_BACKGROUND, "example.org", 1 << dns_utils::RT_A, {result_handler, this});
+    ASSERT_EQ(this->raised_connection_requests.size(), 0);
+
+    this->run_event_loop_once();
+
+    ASSERT_EQ(this->raised_connection_requests.size(), 1);
+    uint64_t connection_id = this->raised_connection_requests[0];
+    this->resolver->complete_connect_request(connection_id, CCR_PASS);
+    this->run_event_loop_once();
+    ASSERT_EQ(this->raised_reads.size(), 1);
+    this->raised_reads.clear();
+
+    std::this_thread::sleep_for(Secs{1});
+
+    this->run_event_loop_once();
+    ASSERT_TRUE(this->raised_result.has_value());
+    ASSERT_TRUE(std::holds_alternative<VpnDnsResolverFailure>(this->raised_result->second));
 }
