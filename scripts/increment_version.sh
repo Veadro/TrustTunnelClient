@@ -15,7 +15,7 @@ then
   NEW_VERSION=$(increment_version ${VERSION})
   echo "New version is ${NEW_VERSION}"
 else
-  if [[ "$argument_version" =~ ^[0-9]\.[0-9].[0-9]*$ ]]
+  if [[ "$argument_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
   then
     NEW_VERSION=$1
     echo "New version is ${NEW_VERSION}"
