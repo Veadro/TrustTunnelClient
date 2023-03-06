@@ -33,7 +33,7 @@
 
 namespace ag {
 
-#define TIMER_PERIOD_S (CONNECTION_TIMEOUT_S / 10)
+#define TIMER_PERIOD_S (TCPIP_DEFAULT_CONNECTION_TIMEOUT_S / 10)
 
 static constexpr int DEFAULT_PACKET_POOL_SIZE = 25;
 static const char *NETIF_NAME = "tn";
@@ -417,7 +417,7 @@ void tcpip_close_internal(TcpipCtx *ctx) {
 }
 
 void tcpip_refresh_connection_timeout(TcpipCtx *ctx, TcpipConnection *connection) {
-    tcpip_refresh_connection_timeout_with_interval(ctx, connection, CONNECTION_TIMEOUT_S);
+    tcpip_refresh_connection_timeout_with_interval(ctx, connection, TCPIP_DEFAULT_CONNECTION_TIMEOUT_S);
 }
 
 void tcpip_refresh_connection_timeout_with_interval(TcpipCtx *ctx, TcpipConnection *connection, time_t seconds) {
@@ -425,7 +425,7 @@ void tcpip_refresh_connection_timeout_with_interval(TcpipCtx *ctx, TcpipConnecti
     event_base_gettimeofday_cached(vpn_event_loop_get_base(ctx->parameters.event_loop), &current_time);
 
     timeval timeout_interval{};
-    timeout_interval.tv_sec = seconds ? seconds : CONNECTION_TIMEOUT_S;
+    timeout_interval.tv_sec = seconds ? seconds : TCPIP_DEFAULT_CONNECTION_TIMEOUT_S;
     timeout_interval.tv_usec = 0;
 
     evutil_timeradd(&current_time, &timeout_interval, &connection->conn_timeout);

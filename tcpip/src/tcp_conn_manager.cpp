@@ -31,13 +31,6 @@ namespace ag {
 
 #define FROM_START_OF_BUFFER nullptr
 
-// 80 seconds for stale local connections (in macOS it's net.inet.tcp.keepinit == 75000,
-// in linux it's maybe around 63 seconds)
-#define CONNECTION_TIMEOUT_FOR_LOCAL_HANDSHAKE_S 80
-#define CONNECTION_TIMEOUT_FOR_ESTABLISHED_S 604800 // 1 week
-#define CONNECTION_TIMEOUT_FOR_DROPPED_S (2 * 60)   // 2 minutes
-#define CONNECTION_TIMEOUT_FOR_UNREACHABLE_S 5 // 5 seconds for unreachable connection and its possible SYN retransmits
-
 // Copied this constant from netinet/tcp.h, because header conflicts with LWIP
 #define TCP_NODELAY 1 /* Turn off Nagle's algorithm. */
 
@@ -68,19 +61,19 @@ static void tcp_refresh_connection_timeout(TcpConnDescriptor *connection) {
     int timeout;
     switch (connection->state) {
     case TCP_CONN_STATE_ACCEPTED:
-        timeout = CONNECTION_TIMEOUT_FOR_ESTABLISHED_S;
+        timeout = TCPIP_TCP_TIMEOUT_FOR_ESTABLISHED_S;
         break;
     case TCP_CONN_STATE_HAVE_RESULT:
-        timeout = CONNECTION_TIMEOUT_FOR_LOCAL_HANDSHAKE_S;
+        timeout = TCPIP_TCP_TIMEOUT_FOR_LOCAL_HANDSHAKE_S;
         break;
     case TCP_CONN_STATE_UNREACHABLE:
-        timeout = CONNECTION_TIMEOUT_FOR_UNREACHABLE_S;
+        timeout = TCPIP_TCP_TIMEOUT_FOR_UNREACHABLE_S;
         break;
     case TCP_CONN_STATE_DROP:
-        timeout = CONNECTION_TIMEOUT_FOR_DROPPED_S;
+        timeout = TCPIP_TCP_TIMEOUT_FOR_DROPPED_S;
         break;
     default:
-        timeout = CONNECTION_TIMEOUT_S;
+        timeout = TCPIP_DEFAULT_CONNECTION_TIMEOUT_S;
         break;
     }
 

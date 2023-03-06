@@ -1,4 +1,4 @@
-# AdGuard VPN libs
+# AdGuard VPN libs (stable branch branched from 0.91.82)
 
 A VPN client library that provides client network traffic tunnelling to an AdGuard VPN server.
 

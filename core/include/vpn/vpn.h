@@ -13,13 +13,14 @@
 #include "net/utils.h"
 #include "vpn/event_loop.h"
 #include "vpn/utils.h"
+#include "tcpip/tcpip.h"
 
 namespace ag {
 
 enum {
     VPN_DEFAULT_ENDPOINT_UPSTREAM_TIMEOUT_MS = 30 * 1000, // for VPN endpoint connection
-    VPN_DEFAULT_TCP_TIMEOUT_MS = 10 * 60 * 1000,          // for bypassed server-side and client-side TCP connections
-    VPN_DEFAULT_UDP_TIMEOUT_MS = 5 * 60 * 1000, // for bypassed and redirected server-side and client-side UDP connections
+    VPN_DEFAULT_TCP_TIMEOUT_MS = TCPIP_TCP_TIMEOUT_FOR_ESTABLISHED_S * 1000, // for bypassed server-side and client-side TCP connections
+    VPN_DEFAULT_UDP_TIMEOUT_MS = TCPIP_UDP_TIMEOUT_S * 1000, // for bypassed and redirected server-side and client-side UDP connections
     VPN_DEFAULT_MAX_CONN_BUFFER_FILE_SIZE = 4 * 1024 * 1024,
     VPN_DEFAULT_CONN_MEMORY_BUFFER_THRESHOLD = DEFAULT_CONNECTION_MEMORY_BUFFER_SIZE,
     VPN_DEFAULT_ENDPOINT_PINGING_PERIOD_MS = 60 * 1000,

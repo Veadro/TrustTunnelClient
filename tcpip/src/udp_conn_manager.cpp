@@ -51,7 +51,7 @@ static void process_forwarded_connection(UdpConnDescriptor *);
 int udp_cm_send_data(UdpConnDescriptor *connection, const uint8_t *data, size_t length) {
     TcpipConnection *common = &connection->common;
     TcpipCtx *ctx = common->parent_ctx;
-    tcpip_refresh_connection_timeout(ctx, common);
+    tcpip_refresh_connection_timeout_with_interval(ctx, common, TCPIP_UDP_TIMEOUT_S);
 
     err_t r = udp_raw_send(connection, &common->addr.dst_ip, common->addr.dst_port, data, length);
     if (ERR_OK != r) {
@@ -116,7 +116,7 @@ bool udp_cm_receive(TcpipCtx *ctx, const ip_addr_t *src_addr, u16_t src_port, co
 
     if (event.result >= 0) {
         update_output_statistics(&connection->common, event.result);
-        tcpip_refresh_connection_timeout(ctx, &connection->common);
+        tcpip_refresh_connection_timeout_with_interval(ctx, &connection->common, TCPIP_UDP_TIMEOUT_S);
     }
 
     return event.result >= 0;
@@ -129,7 +129,7 @@ void udp_cm_complete_connect_request(TcpipCtx *ctx, UdpConnDescriptor *connectio
         return;
     }
     connection->state = UDP_CONN_STATE_CONFIRMED;
-    tcpip_refresh_connection_timeout(ctx, &connection->common);
+    tcpip_refresh_connection_timeout_with_interval(ctx, &connection->common, TCPIP_UDP_TIMEOUT_S);
 
     typedef struct {
         void (*handler)(UdpConnDescriptor *);
@@ -256,7 +256,7 @@ UdpConnDescriptor *udp_cm_create_descriptor(TcpipCtx *ctx, struct pbuf *buffer, 
     common->addr = {*src_addr, src_port, *dst_addr, dst_port};
     common->parent_ctx = ctx;
 
-    tcpip_refresh_connection_timeout(ctx, common);
+    tcpip_refresh_connection_timeout_with_interval(ctx, common, TCPIP_UDP_TIMEOUT_S);
     tcpip_put_connection(&ctx->udp.connections, common);
     udp_cm_enqueue_incoming_packet(connection, buffer, header_len);
 

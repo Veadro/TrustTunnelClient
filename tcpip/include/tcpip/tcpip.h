@@ -15,7 +15,17 @@ namespace ag {
 
 // Default size of maximum transfer unit size for TCP packets
 #define DEFAULT_MTU_SIZE 1500u
-#define CONNECTION_TIMEOUT_S 30
+
+#define TCPIP_DEFAULT_CONNECTION_TIMEOUT_S 30
+
+// 80 seconds for stale local connections (in macOS it's net.inet.tcp.keepinit == 75000,
+// in linux it's maybe around 63 seconds)
+#define TCPIP_TCP_TIMEOUT_FOR_LOCAL_HANDSHAKE_S 80
+#define TCPIP_TCP_TIMEOUT_FOR_ESTABLISHED_S 604800 // 1 week
+#define TCPIP_TCP_TIMEOUT_FOR_DROPPED_S (2 * 60)   // 2 minutes
+#define TCPIP_TCP_TIMEOUT_FOR_UNREACHABLE_S 5 // 5 seconds for unreachable connection and its possible SYN retransmits
+
+#define TCPIP_UDP_TIMEOUT_S (5 * 60) // 5 minutes
 
 #define ENABLE_STATISTICS 0
 
