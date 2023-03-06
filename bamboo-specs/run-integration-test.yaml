@@ -107,7 +107,7 @@ Run integration test:
             }
 
             cd vpn-libs-endpoint/examples/my_vpn
-            ../../target/release/vpn_endpoint vpn.conf > /dev/null 2>&1 &
+            ../../target/release/vpn_endpoint vpn.conf tls_hosts.conf > /dev/null 2>&1 &
             echo "Start endpoint"
             sleep 3
 
@@ -196,7 +196,7 @@ Run integration test:
             export SRC_ROOT=${PWD}
 
             cd vpn-libs-endpoint/examples/my_vpn
-            ../../target/release/vpn_endpoint vpn.conf > /dev/null 2>&1 &
+            ../../target/release/vpn_endpoint vpn.conf tls_hosts.conf > /dev/null 2>&1 &
             echo "Start endpoint"
             sleep 3
 
