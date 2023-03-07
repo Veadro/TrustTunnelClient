@@ -1,5 +1,7 @@
 # CHANGELOG
 
+## 0.92.11
+
 * [Feature] `h3://` scheme is now allowed for DNS upstream.
 
 ## 0.91.88
