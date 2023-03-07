@@ -1,5 +1,7 @@
 # CHANGELOG
 
+* [Feature] `h3://` scheme is now allowed for DNS upstream.
+
 ## 0.91.88
 
 * DNS queries are now routed according to VPN settings. I.e., queries with domains
