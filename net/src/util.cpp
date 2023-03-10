@@ -37,6 +37,14 @@ namespace ag {
 
 static const Logger g_logger("NET_UTILS");
 
+#ifdef _WIN32
+
+using GetInterfaceDnsSettingsFunc = DWORD(WINAPI *)(GUID Interface, DNS_INTERFACE_SETTINGS *Settings);
+static GetInterfaceDnsSettingsFunc GetInterfaceDnsSettings_func =
+        (GetInterfaceDnsSettingsFunc) GetProcAddress(GetModuleHandleA("iphlpapi.dll"), "GetInterfaceDnsSettings");
+
+#endif // _WIN32
+
 std::string http_headers_to_http1_message(const HttpHeaders *headers, bool one_line) {
     if (headers == nullptr) {
         return "";
@@ -287,11 +295,17 @@ static std::unordered_map<std::string, std::string> load_doh_well_known_servers(
 
 static Result<SystemDnsServers, RetrieveInterfaceDnsError> retrieve_interface_dns_servers_with_doh(
         const GUID &guid, int ip_family) {
+    if (GetInterfaceDnsSettings_func == nullptr) {
+        int err = sys::last_error();
+        return make_error(RetrieveInterfaceDnsError::AE_LOAD_GET_INTERFACE_DNS_SERVERS,
+                AG_FMT("{} ({})", sys::strerror(err), err));
+    }
+
     DNS_INTERFACE_SETTINGS3 settings = {
             .Version = DNS_INTERFACE_SETTINGS_VERSION3,
             .Flags = (ip_family == AF_INET) ? ULONG64(0) : DNS_SETTING_IPV6,
     };
-    DWORD ret = GetInterfaceDnsSettings(guid, (DNS_INTERFACE_SETTINGS *) &settings);
+    DWORD ret = GetInterfaceDnsSettings_func(guid, (DNS_INTERFACE_SETTINGS *) &settings);
     if (ret != ERROR_SUCCESS) {
         return make_error(RetrieveInterfaceDnsError::AE_IF_DNS_SETTINGS, AG_FMT("{} ({})", sys::strerror(ret), ret));
     }
@@ -364,13 +378,19 @@ static Result<SystemDnsServers, RetrieveInterfaceDnsError> retrieve_interface_dn
     return servers;
 }
 
-static Result<SystemDnsServers, RetrieveInterfaceDnsError> retrieve_interface_dns_servers_plain_only(
+static Result<SystemDnsServers, RetrieveInterfaceDnsError> retrieve_interface_dns_servers_plain_only_win10(
         const GUID &guid, int ip_family) {
+    if (GetInterfaceDnsSettings_func == nullptr) {
+        int err = sys::last_error();
+        return make_error(RetrieveInterfaceDnsError::AE_LOAD_GET_INTERFACE_DNS_SERVERS,
+                AG_FMT("{} ({})", sys::strerror(err), err));
+    }
+
     DNS_INTERFACE_SETTINGS settings = {
             .Version = DNS_INTERFACE_SETTINGS_VERSION1,
             .Flags = (ip_family == AF_INET) ? ULONG64(0) : DNS_SETTING_IPV6,
     };
-    DWORD ret = GetInterfaceDnsSettings(guid, &settings);
+    DWORD ret = GetInterfaceDnsSettings_func(guid, &settings);
     if (ret != ERROR_SUCCESS) {
         return make_error(RetrieveInterfaceDnsError::AE_IF_DNS_SETTINGS, AG_FMT("{} ({})", sys::strerror(ret), ret));
     }
@@ -427,24 +447,27 @@ Result<SystemDnsServers, RetrieveInterfaceDnsError> retrieve_interface_dns_serve
     }
 
     SystemDnsServers servers;
-    for (int family : {AF_INET, AF_INET6}) {
-        if ((family == AF_INET && !adapter->Ipv4Enabled) || (family == AF_INET6 && !adapter->Ipv6Enabled)) {
-            continue;
-        }
+    // otherwise they are collected just before returning from the function
+    if (sys::is_windows_10_or_greater()) {
+        for (int family : {AF_INET, AF_INET6}) {
+            if ((family == AF_INET && !adapter->Ipv4Enabled) || (family == AF_INET6 && !adapter->Ipv6Enabled)) {
+                continue;
+            }
 
-        static const bool IS_WINDOWS_11_OR_GREATER = sys::is_windows_11_or_greater();
-        const auto *retrieve_func = IS_WINDOWS_11_OR_GREATER ? retrieve_interface_dns_servers_with_doh
-                                                             : retrieve_interface_dns_servers_plain_only;
-        auto r = retrieve_func(guid, family);
-        if (r.has_error()) {
-            return r;
-        }
+            static const bool IS_WINDOWS_11_OR_GREATER = sys::is_windows_11_or_greater();
+            const auto *retrieve_func = IS_WINDOWS_11_OR_GREATER ? retrieve_interface_dns_servers_with_doh
+                                                                 : retrieve_interface_dns_servers_plain_only_win10;
+            auto r = retrieve_func(guid, family);
+            if (r.has_error()) {
+                return r;
+            }
 
-        SystemDnsServers &s = r.value();
-        servers.main.insert(
-                servers.main.end(), std::make_move_iterator(s.main.begin()), std::make_move_iterator(s.main.end()));
-        servers.fallback.insert(servers.fallback.end(), std::make_move_iterator(s.fallback.begin()),
-                std::make_move_iterator(s.fallback.end()));
+            SystemDnsServers &s = r.value();
+            servers.main.insert(
+                    servers.main.end(), std::make_move_iterator(s.main.begin()), std::make_move_iterator(s.main.end()));
+            servers.fallback.insert(servers.fallback.end(), std::make_move_iterator(s.fallback.begin()),
+                    std::make_move_iterator(s.fallback.end()));
+        }
     }
 
     if (!servers.main.empty()) {

@@ -224,6 +224,7 @@ enum RetrieveInterfaceDnsError {
     AE_IF_DNS_SETTINGS,
     AE_IF_NOT_FOUND,
     AE_LUID_TO_GUID,
+    AE_LOAD_GET_INTERFACE_DNS_SERVERS,
 };
 
 template <>
@@ -235,6 +236,7 @@ struct ErrorCodeToString<RetrieveInterfaceDnsError> {
         case AE_IF_DNS_SETTINGS: return "GetInterfaceDnsSettings()";
         case AE_IF_NOT_FOUND: return "Interface not found";
         case AE_LUID_TO_GUID: return "ConvertInterfaceLuidToGuid()";
+        case AE_LOAD_GET_INTERFACE_DNS_SERVERS: return "GetProcAddress()";
         }
         // clang-format on
     }

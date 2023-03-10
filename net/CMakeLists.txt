@@ -93,3 +93,4 @@ add_unit_test(test_locations_pinger "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" TRUE 
 add_unit_test(test_locations_pinger_runner "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
 add_unit_test(test_dns_utils "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
 add_unit_test(test_tls_serialize "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
+add_unit_test(test_net_utils "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
