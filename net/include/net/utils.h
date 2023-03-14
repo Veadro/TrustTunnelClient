@@ -221,10 +221,8 @@ std::vector<uint32_t> collect_operable_network_interfaces();
 
 enum RetrieveInterfaceDnsError {
     AE_ADAPTERS_ADDRESSES,
-    AE_IF_DNS_SETTINGS,
     AE_IF_NOT_FOUND,
     AE_LUID_TO_GUID,
-    AE_LOAD_GET_INTERFACE_DNS_SERVERS,
 };
 
 template <>
@@ -233,10 +231,8 @@ struct ErrorCodeToString<RetrieveInterfaceDnsError> {
         // clang-format off
         switch (code) {
         case AE_ADAPTERS_ADDRESSES: return "GetAdaptersAddresses()";
-        case AE_IF_DNS_SETTINGS: return "GetInterfaceDnsSettings()";
         case AE_IF_NOT_FOUND: return "Interface not found";
         case AE_LUID_TO_GUID: return "ConvertInterfaceLuidToGuid()";
-        case AE_LOAD_GET_INTERFACE_DNS_SERVERS: return "GetProcAddress()";
         }
         // clang-format on
     }

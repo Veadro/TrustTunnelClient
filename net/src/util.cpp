@@ -39,9 +39,23 @@ static const Logger g_logger("NET_UTILS");
 
 #ifdef _WIN32
 
-using GetInterfaceDnsSettingsFunc = DWORD(WINAPI *)(GUID Interface, DNS_INTERFACE_SETTINGS *Settings);
-static GetInterfaceDnsSettingsFunc GetInterfaceDnsSettings_func =
-        (GetInterfaceDnsSettingsFunc) GetProcAddress(GetModuleHandleA("iphlpapi.dll"), "GetInterfaceDnsSettings");
+static void *retrieve_func_pointer(HMODULE module, const char *name) {
+    void *func = GetProcAddress(module, name);
+    if (func == nullptr) {
+        int err = sys::last_error();
+        dbglog(g_logger, "GetProcAddress(): name={}, error='{}' ({})", name, sys::strerror(err), err);
+    }
+    return func;
+}
+
+using GetInterfaceDnsSettingsFunc = DWORD(WINAPI *)(GUID, DNS_INTERFACE_SETTINGS *);
+static GetInterfaceDnsSettingsFunc GetInterfaceDnsSettings_func = (GetInterfaceDnsSettingsFunc) retrieve_func_pointer(
+        GetModuleHandleA("iphlpapi.dll"), "GetInterfaceDnsSettings");
+
+using FreeInterfaceDnsSettingsFunc = void(WINAPI *)(DNS_INTERFACE_SETTINGS *);
+static FreeInterfaceDnsSettingsFunc FreeInterfaceDnsSettings_func =
+        (FreeInterfaceDnsSettingsFunc) retrieve_func_pointer(
+                GetModuleHandleA("iphlpapi.dll"), "FreeInterfaceDnsSettings");
 
 #endif // _WIN32
 
@@ -293,12 +307,9 @@ static std::unordered_map<std::string, std::string> load_doh_well_known_servers(
     return result;
 }
 
-static Result<SystemDnsServers, RetrieveInterfaceDnsError> retrieve_interface_dns_servers_with_doh(
-        const GUID &guid, int ip_family) {
-    if (GetInterfaceDnsSettings_func == nullptr) {
-        int err = sys::last_error();
-        return make_error(RetrieveInterfaceDnsError::AE_LOAD_GET_INTERFACE_DNS_SERVERS,
-                AG_FMT("{} ({})", sys::strerror(err), err));
+static std::optional<SystemDnsServers> retrieve_interface_dns_servers_with_doh(const GUID &guid, int ip_family) {
+    if (GetInterfaceDnsSettings_func == nullptr || FreeInterfaceDnsSettings_func == nullptr) {
+        return std::nullopt;
     }
 
     DNS_INTERFACE_SETTINGS3 settings = {
@@ -307,7 +318,8 @@ static Result<SystemDnsServers, RetrieveInterfaceDnsError> retrieve_interface_dn
     };
     DWORD ret = GetInterfaceDnsSettings_func(guid, (DNS_INTERFACE_SETTINGS *) &settings);
     if (ret != ERROR_SUCCESS) {
-        return make_error(RetrieveInterfaceDnsError::AE_IF_DNS_SETTINGS, AG_FMT("{} ({})", sys::strerror(ret), ret));
+        warnlog(g_logger, "GetInterfaceDnsSettings(): {} ({})", sys::strerror(ret), ret);
+        return std::nullopt;
     }
 
     std::string server_list = utils::from_wstring((settings.NameServer != nullptr) ? settings.NameServer : L"");
@@ -361,7 +373,7 @@ static Result<SystemDnsServers, RetrieveInterfaceDnsError> retrieve_interface_dn
         }
     }
 
-    FreeInterfaceDnsSettings((DNS_INTERFACE_SETTINGS *) &settings);
+    FreeInterfaceDnsSettings_func((DNS_INTERFACE_SETTINGS *) &settings);
 
     for (auto &[idx, resolved_host] : resolved_hosts) {
         if (!(servers.main.at(idx).resolved_host = SocketAddress(resolved_host, 0))->valid()) {
@@ -374,40 +386,6 @@ static Result<SystemDnsServers, RetrieveInterfaceDnsError> retrieve_interface_dn
     std::erase_if(servers.main, [](const SystemDnsServer &s) {
         return s.resolved_host.has_value() && !s.resolved_host->valid();
     });
-
-    return servers;
-}
-
-static Result<SystemDnsServers, RetrieveInterfaceDnsError> retrieve_interface_dns_servers_plain_only_win10(
-        const GUID &guid, int ip_family) {
-    if (GetInterfaceDnsSettings_func == nullptr) {
-        int err = sys::last_error();
-        return make_error(RetrieveInterfaceDnsError::AE_LOAD_GET_INTERFACE_DNS_SERVERS,
-                AG_FMT("{} ({})", sys::strerror(err), err));
-    }
-
-    DNS_INTERFACE_SETTINGS settings = {
-            .Version = DNS_INTERFACE_SETTINGS_VERSION1,
-            .Flags = (ip_family == AF_INET) ? ULONG64(0) : DNS_SETTING_IPV6,
-    };
-    DWORD ret = GetInterfaceDnsSettings_func(guid, &settings);
-    if (ret != ERROR_SUCCESS) {
-        return make_error(RetrieveInterfaceDnsError::AE_IF_DNS_SETTINGS, AG_FMT("{} ({})", sys::strerror(ret), ret));
-    }
-
-    std::string server_list = utils::from_wstring((settings.NameServer != nullptr) ? settings.NameServer : L"");
-    std::vector<std::string_view> server_views = utils::split_by_any_of(server_list, " ,");
-
-    SystemDnsServers servers;
-    servers.main.reserve(server_views.size());
-    std::transform(server_views.begin(), server_views.end(), std::back_inserter(servers.main),
-            [](std::string_view s) -> SystemDnsServer {
-                return {
-                        .address = std::string{s},
-                };
-            });
-
-    FreeInterfaceDnsSettings(&settings);
 
     return servers;
 }
@@ -447,19 +425,16 @@ Result<SystemDnsServers, RetrieveInterfaceDnsError> retrieve_interface_dns_serve
     }
 
     SystemDnsServers servers;
-    // otherwise they are collected just before returning from the function
-    if (sys::is_windows_10_or_greater()) {
+    static const bool IS_WINDOWS_11_OR_GREATER = sys::is_windows_11_or_greater();
+    if (IS_WINDOWS_11_OR_GREATER) {
         for (int family : {AF_INET, AF_INET6}) {
             if ((family == AF_INET && !adapter->Ipv4Enabled) || (family == AF_INET6 && !adapter->Ipv6Enabled)) {
                 continue;
             }
 
-            static const bool IS_WINDOWS_11_OR_GREATER = sys::is_windows_11_or_greater();
-            const auto *retrieve_func = IS_WINDOWS_11_OR_GREATER ? retrieve_interface_dns_servers_with_doh
-                                                                 : retrieve_interface_dns_servers_plain_only_win10;
-            auto r = retrieve_func(guid, family);
-            if (r.has_error()) {
-                return r;
+            std::optional r = retrieve_interface_dns_servers_with_doh(guid, family);
+            if (!r.has_value()) {
+                continue;
             }
 
             SystemDnsServers &s = r.value();

@@ -186,11 +186,6 @@ const char *strerror(int code);
 #ifdef _WIN32
 
 /**
- * Avoid manifest dependency required by https://learn.microsoft.com/en-us/windows/win32/api/versionhelpers/nf-versionhelpers-iswindows10orgreater
- */
-bool is_windows_10_or_greater();
-
-/**
  * The helper for Windows 11 does not exist yet
  */
 bool is_windows_11_or_greater();
