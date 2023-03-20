@@ -4,11 +4,11 @@
 #include <unistd.h>
 #endif
 
-#include <errno.h>
-#include <fcntl.h>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <errno.h>
+#include <fcntl.h>
 #include <span>
 #include <vector>
 
@@ -170,8 +170,8 @@ static bool process_data_from_utun(TcpipCtx *ctx) {
     struct UtunHdr hdr;
 
     static constexpr int HDR_SIZE = sizeof(hdr);
-    evbuffer_iovec iov[] = {{.iov_base = &hdr, .iov_len = HDR_SIZE},
-            {.iov_base = packet.data, .iov_len = ctx->parameters.mtu_size}};
+    evbuffer_iovec iov[] = {
+            {.iov_base = &hdr, .iov_len = HDR_SIZE}, {.iov_base = packet.data, .iov_len = ctx->parameters.mtu_size}};
     ssize_t bytes_read = readv(ctx->parameters.tun_fd, iov, std::size(iov));
     if (bytes_read <= 0) {
         if (EWOULDBLOCK != errno) {
@@ -208,26 +208,31 @@ static bool process_data_from_tun(TcpipCtx *ctx) {
 }
 #endif /* else of __MACH__ */
 
-struct CustomBuf{
-    pbuf_custom p{};
-    const uint8_t *data;
-    size_t size;
-    void (*destructor)(void *destructor_arg, uint8_t *data);
-    void *destructor_arg;
-    explicit CustomBuf(VpnPacket *packet) :
-            data(packet->data),
-            size(packet->size),
-            destructor(packet->destructor),
-            destructor_arg(packet->destructor_arg)
-    {}
+struct ZeroCopyPBuf {
+    pbuf_custom p;
+    VpnPacket v;
 };
 
-static void custom_buf_free(struct pbuf *buf) {
-    auto *buf_custom = (CustomBuf *) buf;
-    if (buf_custom->destructor) {
-        buf_custom->destructor(buf_custom->destructor_arg, (uint8_t *) buf_custom->data);
+static void zerocopy_pbuf_free(struct pbuf *buf) {
+    auto *buf_custom = (ZeroCopyPBuf *) buf;
+    if (buf_custom->v.destructor) {
+        buf_custom->v.destructor(buf_custom->v.destructor_arg, (uint8_t *) buf_custom->v.data);
     }
     delete buf_custom;
+}
+
+static pbuf *zerocopy_pbuf_create(VpnPacket *packet) {
+    auto *buf_custom = new ZeroCopyPBuf{};
+    buf_custom->p.custom_free_function = zerocopy_pbuf_free;
+    buf_custom->v = *packet;
+
+    pbuf *buffer = pbuf_alloced_custom(PBUF_RAW, buf_custom->v.size, PBUF_REF, &buf_custom->p,
+            (void *) buf_custom->v.data, u16_t(buf_custom->v.size));
+    if (buffer == nullptr) {
+        delete buf_custom;
+        return nullptr;
+    }
+    return buffer;
 }
 
 static void process_input_packet(TcpipCtx *ctx, VpnPacket *packet) {
@@ -236,19 +241,7 @@ static void process_input_packet(TcpipCtx *ctx, VpnPacket *packet) {
         dump_packet_to_pcap(ctx, packet->data, packet->size);
     }
 
-    auto *buf_custom = new CustomBuf{packet};
-    buf_custom->p.custom_free_function = custom_buf_free;
-
-    pbuf *buffer = pbuf_alloced_custom(PBUF_RAW,
-            buf_custom->size,
-            PBUF_REF,
-            &buf_custom->p,
-            (void *) buf_custom->data,
-            u16_t(buf_custom->size));
-    if (buffer == nullptr) {
-        delete buf_custom;
-        return;
-    }
+    struct pbuf *buffer = zerocopy_pbuf_create(packet);
     err_t result = netif_input(buffer, ctx->netif);
 
     if (ERR_OK != result) {

@@ -245,24 +245,24 @@ static inline int process_udp(
     }
 }
 
-static int finalize_icmp_request(TcpipCtx *ctx, IcmpRequestDescriptor *request, u16_t header_len) {
+static int finalize_icmp_request(TcpipCtx *ctx, IcmpRequestDescriptor *request, struct pbuf *buffer, u16_t header_len) {
     // It was set to the original destination address in `ip4_input_hook`, but in case the message
     // is not an echo reply the source address may not be the same as the original destination
     ip4_addr_copy(*ip_2_ip4(&ctx->netif->ip_addr), *ip_2_ip4(&request->reply_src));
 
     switch (request->reply_type) {
     case ICMP_MT_ECHO_REPLY:
-        return PASS_PACKET_TO_LWIP(request->buffer, header_len);
+        return PASS_PACKET_TO_LWIP(buffer, header_len);
     case ICMP_MT_DESTINATION_UNREACHABLE:
-        pbuf_header_force(request->buffer, header_len);
-        icmp_dest_unreach(request->buffer, (icmp_dur_type) request->reply_code);
-        return DROP_PACKET(request->buffer);
+        pbuf_header_force(buffer, header_len);
+        icmp_dest_unreach(buffer, (icmp_dur_type) request->reply_code);
+        return DROP_PACKET(buffer);
     case ICMP_MT_TIME_EXCEEDED:
-        pbuf_header_force(request->buffer, header_len);
-        icmp_time_exceeded(request->buffer, (icmp_te_type) request->reply_code);
-        return DROP_PACKET(request->buffer);
+        pbuf_header_force(buffer, header_len);
+        icmp_time_exceeded(buffer, (icmp_te_type) request->reply_code);
+        return DROP_PACKET(buffer);
     default:
-        return DROP_PACKET(request->buffer);
+        return DROP_PACKET(buffer);
     }
 }
 
@@ -279,7 +279,7 @@ static void icmp6_err_message_hook_exit() {
     ip_current_netif() = nullptr;
 }
 
-static int finalize_icmpv6_request(TcpipCtx *ctx, IcmpRequestDescriptor *request, u16_t header_len) {
+static int finalize_icmpv6_request(TcpipCtx *ctx, IcmpRequestDescriptor *request, struct pbuf *buffer, u16_t header_len) {
     // It was set to the original destination address in `ip6_input_hook`, but in case the message
     // is not an echo reply the source address may not be the same as the original destination
     ip6_addr_copy(*ip_2_ip6(&ctx->netif->ip6_addr[1]), *ip_2_ip6(&request->reply_src));
@@ -287,32 +287,28 @@ static int finalize_icmpv6_request(TcpipCtx *ctx, IcmpRequestDescriptor *request
     switch (request->reply_type) {
     case ICMPV6_MT_DESTINATION_UNREACHABLE:
         icmp6_err_message_hook_enter(&request->src, ctx->netif);
-        pbuf_header_force(request->buffer, header_len);
-        icmp6_dest_unreach(request->buffer, (icmp6_dur_code) request->reply_code);
+        pbuf_header_force(buffer, header_len);
+        icmp6_dest_unreach(buffer, (icmp6_dur_code) request->reply_code);
         icmp6_err_message_hook_exit();
-        return DROP_PACKET(request->buffer);
+        return DROP_PACKET(buffer);
     case ICMPV6_MT_TIME_EXCEEDED:
         icmp6_err_message_hook_enter(&request->src, ctx->netif);
-        pbuf_header_force(request->buffer, header_len);
-        icmp6_time_exceeded(request->buffer, (icmp6_te_code) request->reply_code);
+        pbuf_header_force(buffer, header_len);
+        icmp6_time_exceeded(buffer, (icmp6_te_code) request->reply_code);
         icmp6_err_message_hook_exit();
-        return DROP_PACKET(request->buffer);
+        return DROP_PACKET(buffer);
     case ICMPV6_MT_ECHO_REPLY:
-        return PASS_PACKET_TO_LWIP(request->buffer, header_len);
+        return PASS_PACKET_TO_LWIP(buffer, header_len);
     default:
-        return DROP_PACKET(request->buffer);
+        return DROP_PACKET(buffer);
     }
 }
 
 static int forward_existing_icmp_entry(
         TcpipCtx *ctx, IcmpRequestDescriptor *request, struct pbuf *buffer, u16_t header_len) {
-    // If somebody tries to send packet with the same id-seqno, drop all of them
-    if (request->buffer != buffer) {
-        return DROP_PACKET(buffer);
-    }
 
-    int r = IP_IS_V4(&request->src) ? finalize_icmp_request(ctx, request, header_len)
-                                    : finalize_icmpv6_request(ctx, request, header_len);
+    int r = IP_IS_V4(&request->src) ? finalize_icmp_request(ctx, request, buffer, header_len)
+                                    : finalize_icmpv6_request(ctx, request, buffer, header_len);
 
     request->buffer = nullptr;
     icmp_rm_close_descriptor(ctx, request);
