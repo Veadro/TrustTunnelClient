@@ -186,7 +186,7 @@ TEST_F(EventLoopTest, CancelByStop) {
 }
 
 // Disabled because does not work with asserts enabled
-TEST_F(EventLoopTest, DISABLE_CancelAfterStopDoesntCrash) {
+TEST_F(EventLoopTest, DISABLED_CancelAfterStopDoesntCrash) {
     vpn_event_loop_stop(m_ev_loop.get());
     auto task_id = event_loop::submit(m_ev_loop.get(),
             {
