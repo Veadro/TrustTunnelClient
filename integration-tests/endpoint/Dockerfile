@@ -44,7 +44,7 @@ RUN echo "{\n\
 }" >>$CONFIG_FILE
 
 RUN echo "{\n\
-  \"tunnel_hosts\": [\n\
+  \"main_hosts\": [\n\
     {\n\
       \"hostname\": \"$ENDPOINT_HOSTNAME\",\n\
       \"cert_chain_path\": \"cert.pem\",\n\
