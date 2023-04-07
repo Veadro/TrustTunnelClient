@@ -131,6 +131,14 @@ void tcp_socket_destroy(TcpSocket *socket) {
     if (socket->bev == nullptr) {
         goto clean_up;
     }
+
+    if (SSL *ssl = bufferevent_openssl_get_ssl(socket->bev); ssl && !SSL_is_init_finished(ssl)) {
+        // If we keep the bufferevent-openssl alive after the socket is destroyed to "complete pending writes",
+        // and a TLS handshake is in progress, it might access the verify callback, which is not guaranteed to
+        // stay alive after the socket is destroyed, resulting in a use-after-free.
+        goto clean_up;
+    }
+
     log_sock(socket, trace, "Pending to write: {}", evbuffer_get_length(bufferevent_get_output(socket->bev)));
 
     evbuffer_remove_cb(bufferevent_get_output(socket->bev), &on_sent_event, socket);
