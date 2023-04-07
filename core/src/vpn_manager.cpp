@@ -403,14 +403,23 @@ VpnListenerConfig vpn_get_listener_config(const Vpn *vpn) {
 }
 
 VpnListenerConfig vpn_listener_config_clone(const VpnListenerConfig *config) {
-    return VpnListenerConfig{
-            .timeout_ms = config->timeout_ms,
-            .dns_upstream = safe_strdup(config->dns_upstream),
-    };
+    VpnListenerConfig out = *config;
+
+    out.dns_upstreams.data = new const char *[config->dns_upstreams.size];
+    out.dns_upstreams.size = config->dns_upstreams.size;
+    for (size_t i = 0; i < out.dns_upstreams.size; ++i) {
+        out.dns_upstreams.data[i] = safe_strdup(config->dns_upstreams.data[i]);
+    }
+
+    return out;
 }
 
 void vpn_listener_config_destroy(VpnListenerConfig *config) {
-    free((char *) config->dns_upstream);
+    for (size_t i = 0; i < config->dns_upstreams.size; ++i) {
+        free((char *) config->dns_upstreams.data[i]);
+    }
+    delete[] config->dns_upstreams.data;
+
     *config = {};
 }
 

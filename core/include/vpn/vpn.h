@@ -107,7 +107,7 @@ typedef struct {
     uint32_t timeout_ms;
     /**
      * Optional.
-     * If configured, the library will intercept and route plain DNS queries to a DNS resolver.
+     * If configured, the library will intercept and route plain DNS queries to the DNS resolvers.
      * One of the following kinds:
      *     8.8.8.8:53 -- plain DNS
      *     tcp://8.8.8.8:53 -- plain DNS over TCP
@@ -116,7 +116,7 @@ typedef struct {
      *     sdns://... -- DNS stamp (see https://dnscrypt.info/stamps-specifications)
      *     quic://dns.adguard.com:8853 -- DNS-over-QUIC
      */
-    const char *dns_upstream;
+    AG_ARRAY_OF(const char *) dns_upstreams;
 } VpnListenerConfig;
 
 /**
@@ -334,7 +334,6 @@ typedef struct {
 } VpnEndpointConnectionStatsEvent;
 
 typedef struct {
-    const char *upstream; // the upstream address (for now, the same as `VpnListenerConfig.dns_upstream`)
 } VpnDnsUpstreamUnavailableEvent;
 
 typedef struct {

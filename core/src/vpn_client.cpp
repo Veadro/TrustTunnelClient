@@ -112,9 +112,7 @@ static void endpoint_connector_finalizer(void *arg, TaskId task_id) {
         self->tunnel->on_exclusions_updated();
         if (self->dns_proxy != nullptr && !self->do_dns_upstream_health_check()) {
             log_client(self, dbg, "Failed to start DNS upstream health check");
-            VpnDnsUpstreamUnavailableEvent event = {
-                    .upstream = self->listener_config.dns_upstream,
-            };
+            VpnDnsUpstreamUnavailableEvent event = {};
             self->parameters.handler.func(
                     self->parameters.handler.arg, vpn_client::EVENT_DNS_UPSTREAM_UNAVAILABLE, &event);
         }
@@ -129,7 +127,7 @@ static void endpoint_connector_handler(void *arg, EndpointConnectorResult result
         self->pending_error = *e;
     } else {
         self->endpoint_upstream = std::move(std::get<std::unique_ptr<ServerUpstream>>(result));
-        if (self->listener_config.dns_upstream != nullptr && self->dns_proxy == nullptr) {
+        if (self->listener_config.dns_upstreams.size > 0 && self->dns_proxy == nullptr) {
             VpnError error = start_dns_proxy(self);
             if (error.code != VPN_EC_NOERROR) {
                 self->pending_error = error;
@@ -237,9 +235,7 @@ static void dns_resolver_handler(void *arg, VpnDnsResolveId, VpnDnsResolverResul
         log_client(self, dbg, "Ignoring DNS resolver health check failure while disconnecting by next level");
     } else {
         log_client(self, dbg, "DNS resolver health check failed");
-        VpnDnsUpstreamUnavailableEvent event = {
-                .upstream = self->listener_config.dns_upstream,
-        };
+        VpnDnsUpstreamUnavailableEvent event = {};
         self->parameters.handler.func(self->parameters.handler.arg, vpn_client::EVENT_DNS_UPSTREAM_UNAVAILABLE, &event);
     }
 }
@@ -366,8 +362,17 @@ static VpnError start_dns_proxy(VpnClient *self) {
         return {VPN_EC_INVALID_SETTINGS, "Failed to initialize DNS proxy listener"};
     }
 
+    std::vector<DnsProxyAccessor::Upstream> dns_upstreams;
+    dns_upstreams.reserve(self->listener_config.dns_upstreams.size);
+    std::transform(self->listener_config.dns_upstreams.data,
+            self->listener_config.dns_upstreams.data + self->listener_config.dns_upstreams.size,
+            std::back_inserter(dns_upstreams), [](const char *address) {
+                return DnsProxyAccessor::Upstream{
+                        .address = address,
+                };
+            });
     self->dns_proxy = std::make_unique<DnsProxyAccessor>(DnsProxyAccessor::Parameters{
-            .upstreams = {{.address = self->listener_config.dns_upstream}},
+            .upstreams = std::move(dns_upstreams),
             .socks_listener_address = ((SocksListener &) *self->dns_proxy_listener).get_listen_address(),
             .cert_verify_handler = self->parameters.cert_verify_handler,
             .ipv6_available = self->ipv6_available,
@@ -472,7 +477,7 @@ VpnError VpnClient::listen(
     if (this->fsm.get_state() == vpn_client::S_CONNECTED) {
         this->tunnel->on_exclusions_updated();
 
-        if (this->listener_config.dns_upstream != nullptr && this->dns_proxy == nullptr) {
+        if (this->listener_config.dns_upstreams.size > 0 && this->dns_proxy == nullptr) {
             error = start_dns_proxy(this);
             if (error.code != VPN_EC_NOERROR) {
                 goto fail;

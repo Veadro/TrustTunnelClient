@@ -218,8 +218,9 @@ TEST_F(VpnClientLive, DnsBeingHealthCheckedListenBeforeConnected) {
             return error;
         }
 
+        const char *dns_upstream = "8.8.8.8";
         ag::VpnListenerConfig listener_config = {
-                .dns_upstream = "8.8.8.8",
+                .dns_upstreams = {&dns_upstream, 1},
         };
         return this->vpn->listen(std::make_unique<TestListener>(), &listener_config, /* ipv6_available */ true);
     });
@@ -243,8 +244,9 @@ TEST_F(VpnClientLive, DnsBeingHealthCheckedListenAfterConnected) {
     std::this_thread::sleep_for(std::chrono::seconds{1});
 
     error = this->run_sync_on_ev_loop<ag::VpnError>([this]() {
+        const char *dns_upstream = "8.8.8.8";
         ag::VpnListenerConfig listener_config = {
-                .dns_upstream = "8.8.8.8",
+                .dns_upstreams = {&dns_upstream, 1},
         };
         return this->vpn->listen(std::make_unique<TestListener>(), &listener_config, /* ipv6_available */ true);
     });
@@ -266,8 +268,9 @@ TEST_F(VpnClientLive, ExclusionsUpdateDoesNotBreakDnsHealthCheck) {
     ASSERT_EQ(error->code, ag::VPN_EC_NOERROR) << error->text;
 
     error = this->run_sync_on_ev_loop<ag::VpnError>([this]() {
+        const char *dns_upstream = "8.8.8.8";
         ag::VpnListenerConfig listener_config = {
-                .dns_upstream = "8.8.8.8",
+                .dns_upstreams = {&dns_upstream, 1},
         };
         return this->vpn->listen(std::make_unique<TestListener>(), &listener_config, /* ipv6_available */ true);
     });
@@ -295,8 +298,9 @@ TEST_F(VpnClientLive, DnsUnavailableOnTimeout) {
     ASSERT_EQ(error->code, ag::VPN_EC_NOERROR) << error->text;
 
     error = this->run_sync_on_ev_loop<ag::VpnError>([this]() {
+        const char *dns_upstream = "1.1.2.3";
         ag::VpnListenerConfig listener_config = {
-                .dns_upstream = "1.1.2.3",
+                .dns_upstreams = {&dns_upstream, 1},
         };
         return this->vpn->listen(std::make_unique<TestListener>(), &listener_config, /* ipv6_available */ true);
     });
@@ -320,8 +324,9 @@ TEST_F(VpnClientLive, DisconnectDoesNotCauseDnsUnavailable) {
     ASSERT_EQ(error->code, ag::VPN_EC_NOERROR) << error->text;
 
     error = this->run_sync_on_ev_loop<ag::VpnError>([this]() {
+        const char *dns_upstream = "8.8.8.8";
         ag::VpnListenerConfig listener_config = {
-                .dns_upstream = "8.8.8.8",
+                .dns_upstreams = {&dns_upstream, 1},
         };
         return this->vpn->listen(std::make_unique<TestListener>(), &listener_config, /* ipv6_available */ true);
     });

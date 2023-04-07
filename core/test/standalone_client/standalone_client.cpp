@@ -131,7 +131,7 @@ struct Params {
     uint32_t mtu_size = DEFAULT_MTU_SIZE;
     std::vector<std::string> included_routes;
     std::vector<std::string> excluded_routes;
-    std::string dns_upstream;
+    std::vector<std::string> dns_upstreams;
     std::string bound_if;
     bool killswitch_enabled;
     std::string exclusions;
@@ -268,8 +268,8 @@ struct Params {
         }
 #endif
 
-        if (config_file.contains("dns_upstream")) {
-            dns_upstream = config_file["dns_upstream"];
+        if (config_file.contains("dns_upstreams")) {
+            dns_upstreams = { config_file["dns_upstreams"].begin(), config_file["dns_upstreams"].end() };
         }
         if (config_file.contains("killswitch_enabled")) {
             killswitch_enabled = config_file["killswitch_enabled"];
@@ -646,8 +646,12 @@ void apply_vpn_settings() {
         assert(0);
     }
 
-    if (!g_params.dns_upstream.empty()) {
-        g_vpn_common_listener_config.dns_upstream = g_params.dns_upstream.c_str();
+    if (!g_params.dns_upstreams.empty()) {
+        g_vpn_common_listener_config.dns_upstreams.data = new const char*[g_params.dns_upstreams.size()];
+        g_vpn_common_listener_config.dns_upstreams.size = g_params.dns_upstreams.size();
+        for (size_t i = 0; i < g_params.dns_upstreams.size(); ++i) {
+            g_vpn_common_listener_config.dns_upstreams.data[i] = g_params.dns_upstreams[i].c_str();
+        }
     }
 }
 
@@ -715,6 +719,8 @@ int main(int argc, char **argv) {
     if (m_loop_thread.joinable()) {
         m_loop_thread.join();
     }
+
+    delete[] g_vpn_common_listener_config.dns_upstreams.data;
 
     return 0;
 }

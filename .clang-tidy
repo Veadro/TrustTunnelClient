@@ -53,6 +53,7 @@ Checks: '
   -readability-duplicate-include,
   -cert-err33-c,
   -misc-const-correctness,
+  -misc-use-anonymous-namespace,
   '
 
 WarningsAsErrors: '*'

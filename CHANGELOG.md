@@ -1,5 +1,9 @@
 # CHANGELOG
 
+* The library now accepts a list of DNS upstreams instead of a single one.
+  * `dns_upsteam` field of `VpnListenerConfig` renamed to `dns_upsteams`.
+  * `dns_upsteam` field removed from `VpnDnsUpstreamUnavailableEvent`.
+
 ## 0.92.11
 
 * [Feature] `h3://` scheme is now allowed for DNS upstream.
