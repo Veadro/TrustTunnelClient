@@ -1,5 +1,7 @@
 # CHANGELOG
 
+## 0.92.28
+
 * Removed `vpn_network_manager_update_tun_interface_dns()` as redundant.
 
 ## 0.92.23
