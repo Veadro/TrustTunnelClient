@@ -848,7 +848,7 @@ bool ag::PlainDnsManager::start_dns_proxy(SystemDnsServers servers) {
             .cert_verify_handler = this->ag::ServerUpstream::vpn->parameters.cert_verify_handler,
     });
 
-    return m_system_dns_proxy->start(std::nullopt);
+    return m_system_dns_proxy->start();
 }
 
 std::optional<sockaddr_storage> ag::PlainDnsManager::get_redirect_address(uint64_t cs_conn_id,

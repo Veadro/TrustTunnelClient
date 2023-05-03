@@ -17,14 +17,13 @@
 
 namespace ag {
 
-static dns::DnsProxySettings make_dns_proxy_settings(const DnsProxyAccessor::Parameters &parameters, std::optional<Millis> timeout) {
+static dns::DnsProxySettings make_dns_proxy_settings(const DnsProxyAccessor::Parameters &parameters) {
     dns::DnsProxySettings settings = dns::DnsProxySettings::get_default();
     settings.upstreams.clear();
     settings.upstreams.reserve(parameters.upstreams.size());
     uint32_t outbound_interface = vpn_network_manager_get_outbound_interface();
-    std::transform(parameters.upstreams.begin(), parameters.upstreams.end(),
-            std::back_inserter(settings.upstreams),
-            [timeout, id = 0, outbound_interface](const DnsProxyAccessor::Upstream &upstream) mutable {
+    std::transform(parameters.upstreams.begin(), parameters.upstreams.end(), std::back_inserter(settings.upstreams),
+            [id = 0, outbound_interface](const DnsProxyAccessor::Upstream &upstream) mutable {
                 IpAddress resolved_host;
                 if (upstream.resolved_host.has_value()) {
                     uint8_t *data = nullptr;
@@ -33,7 +32,7 @@ static dns::DnsProxySettings make_dns_proxy_settings(const DnsProxyAccessor::Par
                     } else {
                         data = resolved_host.emplace<Ipv6Address>().data();
                     }
-                    auto *ip = (uint8_t *)sockaddr_get_ip_ptr(upstream.resolved_host->c_sockaddr());
+                    auto *ip = (uint8_t *) sockaddr_get_ip_ptr(upstream.resolved_host->c_sockaddr());
                     size_t size = sockaddr_get_ip_size(upstream.resolved_host->c_sockaddr());
                     std::copy(ip, ip + size, data);
                 }
@@ -41,7 +40,6 @@ static dns::DnsProxySettings make_dns_proxy_settings(const DnsProxyAccessor::Par
                 return dns::UpstreamOptions{
                         .address = upstream.address,
                         .bootstrap = {std::begin(AG_UNFILTERED_DNS_IPS_V4), std::end(AG_UNFILTERED_DNS_IPS_V4)},
-                        .timeout = timeout.value_or(Millis{0}),
                         .resolved_server_ip = resolved_host,
                         .id = id++,
                         .outbound_interface =
@@ -79,14 +77,14 @@ DnsProxyAccessor::DnsProxyAccessor(Parameters p)
 
 DnsProxyAccessor::~DnsProxyAccessor() = default;
 
-bool DnsProxyAccessor::start(std::optional<std::chrono::milliseconds> timeout) {
+bool DnsProxyAccessor::start() {
     if (m_dns_proxy != nullptr) {
         log_accessor(this, err, "Already started");
         return false;
     }
 
     m_dns_proxy = std::make_unique<dns::DnsProxy>();
-    auto [ok, msg] = m_dns_proxy->init(make_dns_proxy_settings(m_parameters, timeout),
+    auto [ok, msg] = m_dns_proxy->init(make_dns_proxy_settings(m_parameters),
             {
                     .on_request_processed = nullptr,
                     .on_certificate_verification =

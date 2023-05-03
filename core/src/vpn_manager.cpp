@@ -634,7 +634,7 @@ VpnDnsUpstreamValidationStatus vpn_validate_dns_upstream(const char *address) {
             .address = address,
             .bootstrap = {"1.1.1.1"},
     };
-    Error<dns::UpstreamUtilsError> err = dns::test_upstream(opts, true, nullptr, true);
+    Error<dns::UpstreamUtilsError> err = dns::test_upstream(opts, {}, true, nullptr, true);
     if (err != nullptr) {
         ag::Logger log{__func__};
         dbglog(log, "{}", err->str());

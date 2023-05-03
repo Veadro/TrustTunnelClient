@@ -377,7 +377,7 @@ static VpnError start_dns_proxy(VpnClient *self) {
             .cert_verify_handler = self->parameters.cert_verify_handler,
     });
 
-    if (!self->dns_proxy->start(std::nullopt)) {
+    if (!self->dns_proxy->start()) {
         self->dns_proxy.reset();
         return {VPN_EC_ERROR, "Failed to start DNS proxy"};
     }
