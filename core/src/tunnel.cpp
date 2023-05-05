@@ -1472,8 +1472,8 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
             break;
         }
 
-        if (conn->server_id == NON_ID) {
-            // sometimes client can poll on not yet connected connections
+        if (conn->upstream == nullptr || conn->server_id == NON_ID) {
+            // sometimes client can poll on not yet established connections
             break;
         }
 
