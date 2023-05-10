@@ -729,7 +729,9 @@ static ServerUpstream *select_upstream(const Tunnel *self, VpnConnectAction acti
     sw_conn->listener = conn->listener;
     sw_conn->upstream = upstream;
     sw_conn->state = CONNS_WAITING_RESPONSE_MIGRATING;
+    sw_conn->flags.set(CONNF_LOOKINGUP_DOMAIN, conn->flags.test(CONNF_LOOKINGUP_DOMAIN));
     sw_conn->migrating_client_id = conn->client_id;
+    sw_conn->app_name = conn->app_name;
     add_connection(self, sw_conn);
     if (conn->proto == IPPROTO_UDP) {
         // do not turn off reads on migrating UDP connections,
@@ -901,8 +903,11 @@ static void on_destination_resolve_result(void *arg, VpnDnsResolveId id, VpnDnsR
     log_conn(self, conn, dbg, "Resolved address: {}", sockaddr_to_str((sockaddr *) &address));
 
     VpnConnectAction action = VPN_CA_DEFAULT;
-    // if the action was default, check if the address matches exclusions
-    if (!conn->flags.test(CONNF_FORCIBLY_BYPASSED) && !conn->flags.test(CONNF_FORCIBLY_REDIRECTED)) {
+    if (conn->flags.test(CONNF_FORCIBLY_BYPASSED)) {
+        action = VPN_CA_FORCE_BYPASS;
+    } else if (conn->flags.test(CONNF_FORCIBLY_REDIRECTED)) {
+        action = VPN_CA_FORCE_REDIRECT;
+    } else {
         DomainFilterMatchStatus filter_result = self->vpn->domain_filter.match_tag(SockAddrTag{address});
         switch (filter_result) {
         case DFMS_DEFAULT:
