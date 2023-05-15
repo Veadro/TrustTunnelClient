@@ -5,6 +5,7 @@
 #include "memory_buffer.h"
 #include "net/dns_utils.h"
 #include "plain_dns_manager.h"
+#include "vpn/internal/utils.h"
 #include "vpn/internal/vpn_client.h"
 #include "vpn/internal/wire_utils.h"
 #include "vpn/platform.h"
@@ -23,6 +24,7 @@ struct ag::PlainDnsManager::ClientSideConnection {
     utils::TransportProtocol protocol;
     UpstreamSideConnections upstream_side_conns;
     bool library_request = false;
+    VpnConnectAction connect_action = VPN_CA_DEFAULT;
     TcpFlowCtrlInfo flow_control_info = {};
     TunnelAddressPair original_addr;
     std::string app_name;
@@ -36,14 +38,6 @@ struct ag::PlainDnsManager::ClientSideConnection {
 
     [[nodiscard]] static std::unique_ptr<ClientSideConnection> make(
             utils::TransportProtocol protocol, TunnelAddressPair original_addr, std::string app_name);
-
-    [[nodiscard]] static constexpr utils::TransportProtocol ipproto_to_protocol(int proto) {
-        if (proto == IPPROTO_UDP) {
-            return utils::TP_UDP;
-        }
-
-        return utils::TP_TCP;
-    }
 
     [[nodiscard]] constexpr int get_ipproto() const {
         switch (this->protocol) {
@@ -201,6 +195,16 @@ bool ag::PlainDnsManager::is_library_request(uint64_t us_conn_id) const {
     return cs_conn_iter->second->library_request;
 }
 
+void ag::PlainDnsManager::notify_connect_action(uint64_t cs_conn_id, VpnConnectAction action) {
+    auto cs_conn_iter = m_client_side_connections.find(cs_conn_id);
+    if (cs_conn_iter == m_client_side_connections.end()) {
+        log_cs_conn(this, cs_conn_id, dbg, "Not found");
+        return;
+    }
+
+    cs_conn_iter->second->connect_action = action;
+}
+
 bool ag::PlainDnsManager::init(VpnClient *vpn, ClientHandler upstream_side_handler, ServerHandler client_side_handler,
         const VpnDnsResolver *dns_resolver) {
     if (ClientListener::InitResult::SUCCESS != this->PlainDnsServerSideAdapter::init(vpn, upstream_side_handler)
@@ -273,7 +277,7 @@ uint64_t ag::PlainDnsManager::open_connection(const ag::TunnelAddressPair *addr,
     uint64_t conn_id = this->ServerUpstream::vpn->upstream_conn_id_generator.get();
     m_opening_connections.insert(conn_id);
     m_client_side_connections.emplace(conn_id,
-            ClientSideConnection::make(ClientSideConnection::ipproto_to_protocol(proto), *addr, std::string(app_name)));
+            ClientSideConnection::make(ag::ipproto_to_transport_protocol(proto).value(), *addr, std::string(app_name)));
     if (!m_async_task.has_value()) {
         m_async_task = event_loop::submit(this->ServerUpstream::vpn->parameters.ev_loop, {this, on_async_task});
     }
@@ -304,10 +308,11 @@ ssize_t ag::PlainDnsManager::send_outgoing_packet(uint64_t cs_conn_id, const uin
 
     ClientSideConnection &cs_conn = *cs_conn_iter->second;
     switch (cs_conn.protocol) {
-    case utils::TP_UDP:
+    case utils::TP_UDP: {
         ++((UdpClientSideConnection &) cs_conn).query_counter;
-        return this->send_outgoing_query(
-                cs_conn_id, cs_conn, m_message_handler.on_outgoing_message({data, length}), {data, length});
+        Uint8View message = {data, length};
+        return this->send_outgoing_query(cs_conn_id, cs_conn, m_message_handler.on_outgoing_message(message), message);
+    }
     case utils::TP_TCP:
         return this->send_outgoing_tcp_packet(cs_conn_id, cs_conn, {data, length});
     }
@@ -761,6 +766,22 @@ ssize_t ag::PlainDnsManager::send_outgoing_query(uint64_t cs_conn_id, ClientSide
         return ssize_t(data.length());
     }
 
+    if (!cs_conn.library_request && cs_conn.connect_action != VPN_CA_DEFAULT) {
+        // Queries on forcibly routed connections also get here.
+        // In this case, the routing policy must be overwritten if it does not
+        // already conform to the logic.
+        PlainDnsMessageHandler::RoutingPolicy overwrite_policy = PlainDnsMessageHandler::vpn_action_to_routing_policy(
+                this->ag::ClientListener::vpn->domain_filter.get_mode(), cs_conn.connect_action);
+        bool need_overwrite = overwrite_policy != routing_policy
+                && (cs_conn.connect_action != VPN_CA_FORCE_BYPASS
+                        || routing_policy != PlainDnsMessageHandler::RP_FORCE_BYPASS);
+        if (need_overwrite) {
+            routing_policy = overwrite_policy;
+            log_cs_conn(this, cs_conn_id, dbg, "Overwriting routing policy for query on forcibly routed connection: {}",
+                    magic_enum::enum_name(routing_policy));
+        }
+    }
+
     if (std::optional us_conn_id = cs_conn.upstream_side_conns[routing_policy];
             !us_conn_id.has_value() || !m_upstream_side_connections.contains(us_conn_id.value())) {
         TunnelAddress dst;
@@ -796,7 +817,8 @@ ssize_t ag::PlainDnsManager::send_outgoing_query(uint64_t cs_conn_id, ClientSide
         }
     }
 
-    uint64_t us_conn_id = cs_conn.upstream_side_conns[routing_policy].value();
+    uint64_t us_conn_id =
+            cs_conn.upstream_side_conns[routing_policy].value(); // NOLINT(bugprone-unchecked-optional-access)
     UpstreamSideConnection &us_conn = *m_upstream_side_connections[us_conn_id];
     switch (us_conn.state) {
     case UpstreamSideConnection::S_CONNECTING: {
@@ -838,7 +860,7 @@ bool ag::PlainDnsManager::start_dns_proxy(SystemDnsServers servers) {
     std::transform(servers.main.begin(), servers.main.end(), std::back_inserter(upstreams), [](SystemDnsServer &s) {
         return DnsProxyAccessor::Upstream{
                 .address = std::move(s.address),
-                .resolved_host = std::move(s.resolved_host),
+                .resolved_host = s.resolved_host,
         };
     });
 

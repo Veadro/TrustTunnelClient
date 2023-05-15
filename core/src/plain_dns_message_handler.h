@@ -62,6 +62,11 @@ public:
      */
     void on_incoming_message(U8View data, bool library_request);
 
+    /**
+     * Get the routing policy corresponding to the vpn mode
+     */
+    [[nodiscard]] static RoutingPolicy vpn_action_to_routing_policy(VpnMode mode, VpnConnectAction action);
+
 private:
     Parameters m_parameters = {};
     ag::Logger m_log{"DNS_MSG_HANDLER"};

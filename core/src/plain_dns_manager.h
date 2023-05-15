@@ -108,7 +108,14 @@ public:
      * (i.e. it's our own request)
      * @param us_conn_id the upstream-side connection ID
      */
-    bool is_library_request(uint64_t us_conn_id) const;
+    [[nodiscard]] bool is_library_request(uint64_t us_conn_id) const;
+
+    /**
+     * Notify that which action the application applied to the connection
+     * @param cs_conn_id the client-side connection ID
+     * @param action the action
+     */
+    void notify_connect_action(uint64_t cs_conn_id, VpnConnectAction action);
 
 private:
     struct ClientSideConnection;
@@ -156,8 +163,8 @@ private:
     ssize_t send_outgoing_query(uint64_t conn_id, ClientSideConnection &cs_conn,
             PlainDnsMessageHandler::RoutingPolicy routing_policy, Uint8View data);
     [[nodiscard]] bool start_dns_proxy(SystemDnsServers servers);
-    std::optional<sockaddr_storage> get_redirect_address(uint64_t cs_conn_id, const ClientSideConnection &cs_conn,
-            PlainDnsMessageHandler::RoutingPolicy routing_policy) const;
+    [[nodiscard]] std::optional<sockaddr_storage> get_redirect_address(uint64_t cs_conn_id,
+            const ClientSideConnection &cs_conn, PlainDnsMessageHandler::RoutingPolicy routing_policy) const;
 };
 
 } // namespace ag

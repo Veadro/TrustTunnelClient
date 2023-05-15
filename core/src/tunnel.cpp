@@ -659,6 +659,7 @@ constexpr VpnConnectAction invert_action(VpnConnectAction action) {
 }
 
 static ServerUpstream *select_upstream(const Tunnel *self, VpnConnectAction action, VpnConnection *conn) {
+    bool is_plain_dns_connection = conn != nullptr && conn->flags.test(CONNF_PLAIN_DNS_CONNECTION);
     switch (action) {
     case VPN_CA_DEFAULT:
         if (const sockaddr_storage * dst; // NOLINT(cppcoreguidelines-init-variables)
@@ -688,16 +689,27 @@ static ServerUpstream *select_upstream(const Tunnel *self, VpnConnectAction acti
             }
         }
 
-        if (conn != nullptr && conn->flags.test(CONNF_PLAIN_DNS_CONNECTION)) {
-            return (PlainDnsClientSideAdapter *) self->plain_dns_manager.get();
+        if (!is_plain_dns_connection) {
+            return select_upstream(self, vpn_mode_to_action(self->vpn->domain_filter.get_mode()), nullptr);
         }
-
-        return select_upstream(self, vpn_mode_to_action(self->vpn->domain_filter.get_mode()), nullptr);
+        break;
     case VPN_CA_FORCE_BYPASS:
-        return self->vpn->bypass_upstream.get();
+        if (!is_plain_dns_connection) {
+            return self->vpn->bypass_upstream.get();
+        }
+        break;
     case VPN_CA_FORCE_REDIRECT:
-        return self->vpn->endpoint_upstream.get();
+        if (!is_plain_dns_connection) {
+            return self->vpn->endpoint_upstream.get();
+        }
+        break;
     }
+
+    if (is_plain_dns_connection) {
+        return (PlainDnsClientSideAdapter *) self->plain_dns_manager.get();
+    }
+
+    return nullptr;
 }
 
 /**
@@ -1071,8 +1083,12 @@ void Tunnel::complete_connect_request(uint64_t id, std::optional<VpnConnectActio
         conn->state = CONNS_WAITING_RESPONSE;
         log_conn(this, conn, trace, "Connecting...");
         add_connection(this, conn);
-        if (conn->flags.test(CONNF_PLAIN_DNS_CONNECTION) && conn->listener == this->dns_resolver.get()) {
-            this->plain_dns_manager->notify_library_request(conn->server_id);
+        if (conn->flags.test(CONNF_PLAIN_DNS_CONNECTION)) {
+            if (conn->listener == this->dns_resolver.get()) {
+                this->plain_dns_manager->notify_library_request(conn->server_id);
+            } else if (action != VPN_CA_DEFAULT) {
+                this->plain_dns_manager->notify_connect_action(conn->server_id, action.value());
+            }
         }
     } else {
         close_client_side_connection(this, conn, 0, true);
