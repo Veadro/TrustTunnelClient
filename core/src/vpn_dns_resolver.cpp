@@ -329,33 +329,6 @@ std::optional<std::pair<uint16_t, std::vector<uint8_t>>> VpnDnsResolver::make_re
     return {{req.id, std::move(req.data)}};
 }
 
-std::optional<uint16_t> VpnDnsResolver::send_request(
-        dns_utils::RecordType record_type, uint64_t conn_id, std::string_view name) {
-    auto req = this->make_request(record_type, name);
-    if (!req.has_value()) {
-        return std::nullopt;
-    }
-
-    auto &[query_id, data] = req.value();
-    ClientRead event = {conn_id, data.data(), data.size()};
-    this->handler.func(this->handler.arg, CLIENT_EVENT_READ, &event);
-    if (event.result != (int) data.size()) {
-        log_conn(this, conn_id, dbg, "Failed to send request: {}", event.result);
-        return std::nullopt;
-    }
-
-    return query_id;
-}
-
-std::array<std::optional<uint16_t>, 2> VpnDnsResolver::send_request(
-        uint64_t conn_id, std::string_view name, RecordTypeSet record_types) {
-    return {
-            record_types.test(dns_utils::RT_A) ? this->send_request(dns_utils::RT_A, conn_id, name) : std::nullopt,
-            record_types.test(dns_utils::RT_AAAA) ? this->send_request(dns_utils::RT_AAAA, conn_id, name)
-                                                  : std::nullopt,
-    };
-}
-
 void VpnDnsResolver::resolve_pending_domains() {
     if (std::all_of(this->queues.begin(), this->queues.end(), [](const Queue &q) {
             return q.empty();
@@ -401,25 +374,44 @@ void VpnDnsResolver::resolve_queue(VpnDnsResolverQueue queue_type) {
             continue;
         }
 
-        Resolve &entry = res_it->second;
-        entry.queries = this->send_request(this->state.connection_id, entry.name, entry.record_types);
         SteadyClock::time_point now = SteadyClock::now();
-        for (size_t i = 0; i < entry.queries.size(); ++i) {
-            const auto &id = entry.queries[i];
-            entry.record_types.set(i, id.has_value());
-            if (id.has_value()) {
-                log_resolver(this, dbg,
-                        "Sent query for resolution: query id={}, resolution id={}, name={}, rtype={}, queue={}",
-                        id.value(), entry_id, entry.name, magic_enum::enum_name(dns_utils::RecordType(i)),
-                        magic_enum::enum_name(queue_type));
-                this->state.queries.emplace(id.value(),
-                        ResolveState::Query{
-                                .id = entry_id,
-                                .record_type = dns_utils::RecordType(i),
-                                .queue_kind = queue_type,
-                        });
-                this->state.deadlines.emplace(now, id.value());
+        Resolve &entry = res_it->second;
+        for (dns_utils::RecordType record_type : magic_enum::enum_values<dns_utils::RecordType>()) {
+            if (!entry.record_types.test(record_type)) {
+                continue;
             }
+
+            auto req = this->make_request(record_type, entry.name);
+            if (!req.has_value()) {
+                continue;
+            }
+
+            auto &[query_id, data] = req.value();
+            auto query_it = this->state.queries
+                                    .emplace(query_id,
+                                            ResolveState::Query{
+                                                    .id = entry_id,
+                                                    .record_type = record_type,
+                                                    .queue_kind = queue_type,
+                                            })
+                                    .first;
+
+            ClientRead event = {this->state.connection_id, data.data(), data.size()};
+            this->handler.func(this->handler.arg, CLIENT_EVENT_READ, &event);
+            if (event.result != (int) data.size()) {
+                log_conn(this, this->state.connection_id, dbg, "Failed to send request: {}", event.result);
+                this->state.queries.erase(query_it);
+                continue;
+            }
+
+            entry.record_types.set(record_type);
+            entry.queries[record_type] = query_id;
+
+            this->state.deadlines.emplace(now, query_id);
+
+            log_resolver(this, dbg,
+                    "Sent query for resolution: query id={}, resolution id={}, name={}, rtype={}, queue={}", query_id,
+                    entry_id, entry.name, magic_enum::enum_name(record_type), magic_enum::enum_name(queue_type));
         }
         if (entry.record_types.none()) {
             ResultHandler handler = this->resolutions.extract(res_it).mapped().handler;

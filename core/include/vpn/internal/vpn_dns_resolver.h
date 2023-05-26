@@ -171,9 +171,6 @@ private:
     void accept_connection();
     [[nodiscard]] std::optional<std::pair<uint16_t, std::vector<uint8_t>>> make_request(
             dns_utils::RecordType record_type, std::string_view name) const;
-    std::optional<uint16_t> send_request(dns_utils::RecordType record_type, uint64_t conn_id, std::string_view name);
-    std::array<std::optional<uint16_t>, 2> send_request(
-            uint64_t conn_id, std::string_view name, RecordTypeSet record_types);
     void resolve_pending_domains();
     void resolve_queue(VpnDnsResolverQueue queue);
     sockaddr_storage make_source_address();
