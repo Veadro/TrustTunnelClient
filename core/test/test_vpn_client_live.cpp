@@ -343,3 +343,36 @@ TEST_F(VpnClientLive, DisconnectDoesNotCauseDnsUnavailable) {
 
     ASSERT_FALSE(this->wait_event(ag::vpn_client::EVENT_DNS_UPSTREAM_UNAVAILABLE, 3 * DNS_TIMEOUT / 2));
 }
+
+TEST_F(VpnClientLive, SystemDnsAbsenceDoesNotCauseDnsUnavailable) {
+    constexpr std::chrono::seconds DNS_TIMEOUT{3};
+
+    ag::vpn_network_manager_update_system_dns({});
+    this->vpn->update_exclusions(ag::VPN_MODE_GENERAL, "example.com");
+
+    this->connection_config.timeout = DNS_TIMEOUT;
+    std::optional error = this->run_sync_on_ev_loop<ag::VpnError>([this]() {
+        return this->vpn->connect(std::move(this->connection_config));
+    });
+    ASSERT_TRUE(error.has_value());
+    ASSERT_EQ(error->code, ag::VPN_EC_NOERROR) << error->text;
+
+    error = this->run_sync_on_ev_loop<ag::VpnError>([this]() {
+        const char *dns_upstream = "8.8.8.8";
+        ag::VpnListenerConfig listener_config = {
+                .dns_upstreams = {&dns_upstream, 1},
+        };
+        return this->vpn->listen(std::make_unique<TestListener>(), &listener_config);
+    });
+    ASSERT_TRUE(error.has_value());
+    ASSERT_EQ(error->code, ag::VPN_EC_NOERROR) << error->text;
+
+    ASSERT_TRUE(this->wait_event(ag::vpn_client::EVENT_CONNECTED));
+    ASSERT_NO_FATAL_FAILURE(wait_log(";; ipv4only.arpa.\tIN\tA"));
+
+    ASSERT_TRUE(this->run_sync_on_ev_loop([this]() {
+        this->vpn->disconnect();
+    }));
+
+    ASSERT_FALSE(this->wait_event(ag::vpn_client::EVENT_DNS_UPSTREAM_UNAVAILABLE, 3 * DNS_TIMEOUT / 2));
+}
