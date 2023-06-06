@@ -143,12 +143,6 @@ void udp_cm_complete_connect_request(TcpipCtx *ctx, UdpConnDescriptor *connectio
             /** TCPIP_ACT_REJECT_UNREACHABLE */ {process_rejected_connection, "rejecting"},
     };
 
-    if ((size_t) action >= std::size(COMPLETE_CONNECTION_HANDLERS)) {
-        log_conn(connection, err, "unknown action ({})... rejecting connection", action);
-        process_rejected_connection(connection);
-        return;
-    }
-
     log_conn(connection, dbg, "{} connection", COMPLETE_CONNECTION_HANDLERS[action].description);
     COMPLETE_CONNECTION_HANDLERS[action].handler(connection);
 }

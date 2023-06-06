@@ -818,7 +818,8 @@ static void handle_udp_read(Socks5Listener *listener, Connection *conn, const ui
     case S5CONNS_WAITING_ACCEPT:
     case S5CONNS_WAITING_REQUEST:
     case S5CONNS_WAITING_USERNAME_PASSWORD:
-        log_conn(listener, conn->id, conn->proto, dbg, "Got UDP packet in wrong state: {}", conn->state);
+        log_conn(listener, conn->id, conn->proto, dbg, "Got UDP packet in wrong state: {}",
+                magic_enum::enum_name(conn->state));
         assert(0);
         destroy_connection(listener, conn);
         break;
@@ -1441,7 +1442,8 @@ static void sock_handler(void *arg, TcpSocketEvent what, void *data) {
         }
         case S5CONNS_WAITING_ACCEPT:
         case S5CONNS_WAITING_CONNECT_RESULT:
-            log_conn(listener, conn->id, conn->proto, dbg, "Got data in wrong state: {}", conn->state);
+            log_conn(listener, conn->id, conn->proto, dbg, "Got data in wrong state: {}",
+                    magic_enum::enum_name(conn->state));
             goto close;
         case S5CONNS_ESTABLISHED: {
             constexpr size_t READ_BUDGET = 64;

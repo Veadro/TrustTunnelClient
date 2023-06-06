@@ -16,7 +16,7 @@ RUN cmake .. -DCMAKE_BUILD_TYPE=Release -G "Ninja" \
         -DCMAKE_CXX_COMPILER="clang++" \
         -DCMAKE_CXX_FLAGS="-stdlib=libc++" && \
     ninja standalone_client && \
-    mv ./core/standalone_client /test/
+    mv ./standalone_client/standalone_client /test/
 
 COPY entrypoint.sh tun_tests.sh socks_tests.sh /test/
 

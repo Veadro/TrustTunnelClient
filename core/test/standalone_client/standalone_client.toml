@@ -1,0 +1,122 @@
+# Possible values: error, warn, info, debug, trace. Default is info.
+loglevel = "info"
+
+# Possible values:
+#   * general: route through a VPN endpoint all connections except ones which destinations are in exclusions,
+#   * selective: route through a VPN endpoint only the connections which destinations are in exclusions.
+# Default is general.
+vpn_mode = "general"
+
+# When disabled, all connection requests are routed directly to target hosts in case session
+# to VPN endpoint is lost and the library fails to recover it. This helps not to break
+# an Internet connection if user has poor connectivity to an endpoint.
+#
+# When enabled, incoming connection requests which should be routed through
+# an endpoint will not be routed directly in that case.
+#
+# Disabled by default.
+killswitch_enabled = true
+
+# List of the domains and addresses which should be routed in a special manner
+#
+# Supported syntax:
+#
+#   * domain name
+#       * if starts with "*.", any subdomain of the domain will be matched including
+#         www-subdomain, but not the domain itself (e.g., `*.example.com` will match
+#         `sub.example.com`, `sub.sub.example.com`, `www.example.com`, but not `example.com`)
+#       * if starts with "www." or it's just a domain name, the domain itself and its
+#         www-subdomain will be matched (e.g. `example.com` and `www.example.com` will
+#         match `example.com` `www.example.com`, but not `sub.example.com`)
+#   * ip address
+#       * recognized formats are:
+#           * [IPv6Address]:port
+#           * [IPv6Address]
+#           * IPv6Address
+#           * IPv4Address:port
+#           * IPv4Address
+#       * if port is not specified, any port will be matched
+#
+# Examples:
+#   * example.org
+#   * 1.2.3.4
+#   * 1.1.1.1:1
+#   * [feed::beef]
+#   * www.example.com
+#   * [deaf::beef]:12
+#   * *.example.com
+exclusions = []
+
+# If specified, the library intercepts and routes plain DNS queries
+# going through the endpoint to the DNS resolvers.
+# One of the following kinds:
+#     8.8.8.8:53 -- plain DNS
+#     tcp://8.8.8.8:53 -- plain DNS over TCP
+#     tls://1.1.1.1 -- DNS-over-TLS
+#     https://dns.adguard.com/dns-query -- DNS-over-HTTPS
+#     sdns://... -- DNS stamp (see https://dnscrypt.info/stamps-specifications)
+#     quic://dns.adguard.com:8853 -- DNS-over-QUIC
+dns_upstreams = []
+
+# The set of endpoint connection settings
+[endpoint]
+# (Required) The endpoint host name, used for TLS session establishment.
+hostname = "localhost"
+# (Required) The endpoint addresses. The exact address is selected by the pinger.
+# Absence of IPv6 addresses in the list makes the VPN client reject IPv6
+# connections which must be routed through the endpoint with unreachable
+# code.
+addresses = ["127.0.0.1:4433", "[::1]:4433"]
+# (Required) Username for authorization.
+username = "premium"
+# (Required) Password for authorization.
+password = "premium"
+# Whether the endpoint certificate verification must be skipped.
+# That is, any certificate is accepted with this one set to true.
+# Disabled by default.
+skip_verification = false
+# Path to a file containing the endpoint certificate.
+# Ignored if `skip_cert_verify` is set to true.
+# If not specified, the endpoint certificate is verfied using only
+# the system storage.
+certificate = ""
+# Either http2 or http3.
+# Default is http2.
+upstream_protocol = "http2"
+# Either http2 or http3.
+# Disabled by default.
+upstream_fallback_protocol = ""
+
+
+# (Required) Defines the listener type by the kind of the nested table.
+# Possible types:
+#   * socks: SOCKS5 proxy with UDP support,
+#   * tun: TUN device.
+[listener]
+
+[listener.socks]
+# (Required) IP address to bind the listener to.
+address = "127.0.0.1:1080"
+# Username for authentication if desired.
+username = ""
+# Password for authentication if desired.
+password = ""
+
+#[listener.tun]
+## (Required) The outbound interface for outgoing connections.
+#bound_if = "en0"
+## The routes to set to the virtual interface.
+#included_routes = [
+#    "0.0.0.0/0",
+#    "2000::/3",
+#]
+## The routes to exclude from routing through the virtual interface.
+#excluded_routes = [
+#    "0.0.0.0/8",
+#    "10.0.0.0/8",
+#    "172.16.0.0/12",
+#    "192.168.0.0/16",
+#    "224.0.0.0/3",
+#]
+## MTU size on the interface. Default is 1500.
+#mtu_size = 1500

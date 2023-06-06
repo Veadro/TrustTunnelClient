@@ -87,14 +87,9 @@ add_compile_options(-Wall -Wextra -Werror -Wimplicit-fallthrough
         -Wno-missing-field-initializers -Wno-unused-parameter -Wno-c99-designator -Wno-unused-private-field)
 endif()
 
-add_executable(standalone_client EXCLUDE_FROM_ALL ${TEST_DIR}/standalone_client/standalone_client.cpp)
-target_link_libraries(standalone_client vpnlibs_core CONAN_PKG::cxxopts)
-target_link_libraries(standalone_client CONAN_PKG::native_libs_common)
-target_link_libraries(standalone_client CONAN_PKG::nlohmann_json)
-target_link_libraries(standalone_client CONAN_PKG::magic_enum)
-
-
 enable_testing()
+
+add_subdirectory(test/standalone_client ${CMAKE_BINARY_DIR}/standalone_client)
 
 link_libraries(CONAN_PKG::gtest)
 
@@ -147,8 +142,4 @@ add_unit_test(test_quic_connection_migration "${TEST_DIR}" "${TEST_EXTRA_INCLUDE
 if(NOT WIN32)
     add_unit_test(test_vpn_manager_fsm ${TEST_DIR} "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
     add_unit_test(test_vpn_manager_fsm_recovery ${TEST_DIR} "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
-
-    add_dependencies(tests standalone_client)
 endif()
-
-configure_file(test/standalone_client/standalone_client.conf ${CMAKE_CURRENT_BINARY_DIR}/standalone_client.conf COPYONLY)

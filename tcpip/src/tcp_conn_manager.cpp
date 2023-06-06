@@ -204,12 +204,6 @@ void tcp_cm_complete_connect_request(TcpipCtx *, TcpConnDescriptor *connection, 
             /** TCPIP_ACT_REJECT_UNREACHABLE */ {process_unreachable_connection, "rejecting unreachable"},
     };
 
-    if ((size_t) action >= std::size(COMPLETE_CONNECTION_HANDLERS)) {
-        log_conn(connection, err, "Unknown action ({})... rejecting connection", action);
-        process_rejected_connection(connection);
-        return;
-    }
-
     log_conn(connection, dbg, "{} connection", COMPLETE_CONNECTION_HANDLERS[action].description);
     COMPLETE_CONNECTION_HANDLERS[action].handler(connection);
 }

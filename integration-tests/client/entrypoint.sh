@@ -14,23 +14,22 @@ fi
 
 COMMON_CONFIG=$(
   cat <<-END
-    "server_info": {
-        "hostname": "$ENDPOINT_HOSTNAME",
-        "addresses": ["$ENDPOINT_IP:4433", "[$ENDPOINT_IPV6]:4433"],
-        "username": "premium",
-        "password": "premium",
-        "skip_cert_verify": true,
-        "upstream_protocol": "$PROTOCOL",
-        "upstream_fallback_protocol": "$PROTOCOL"
-    },
-    "listener_type": "$MODE",
-    "killswitch_enabled": true,
-    "vpn_mode": "general",
-    "loglevel": "trace",
-    "exclusions": [
-      "example.org",
-      "cloudflare-dns.com"
-    ],
+loglevel = "trace"
+vpn_mode = "general"
+killswitch_enabled = true
+exclusions = [
+  "example.org",
+  "cloudflare-dns.com",
+]
+
+[endpoint]
+hostname = "$ENDPOINT_HOSTNAME"
+addresses = ["$ENDPOINT_IP:4433", "[$ENDPOINT_IPV6]:4433"]
+username = "premium"
+password = "premium"
+skip_verification = true
+upstream_protocol = "$PROTOCOL"
+upstream_fallback_protocol = "$PROTOCOL"
 END
 )
 
@@ -50,40 +49,31 @@ ip6tables -I OUTPUT -o eth0 -d "$ENDPOINT_IPV6" -j ACCEPT
 ip6tables -A OUTPUT -o eth0 -j DROP
 
 if [[ "$MODE" == "tun" ]]; then
-  {
-    echo "{"
-    echo "$COMMON_CONFIG"
-    echo "
-    \"tun_info\": {
-        \"excluded_routes\": [
-            \"0.0.0.0/8\",
-            \"10.0.0.0/8\",
-            \"172.16.0.0/12\",
-            \"192.168.0.0/16\",
-            \"224.0.0.0/3\"
-        ],
-        \"included_routes\": [
-            \"0.0.0.0/0\",
-            \"2000::/3\"
-        ],
-        \"mtu_size\": 1500,
-        \"bound_if\": \"eth0\"
-    }"
-    echo "}"
-  } >>standalone_client.conf
-  ./standalone_client >> /output/$LOG_FILE_NAME 2>&1
+  cat >>standalone_client.toml <<EOF
+$COMMON_CONFIG
+
+[listener.tun]
+bound_if = "eth0"
+included_routes = [
+    "0.0.0.0/0",
+    "2000::/3",
+]
+excluded_routes = [
+    "0.0.0.0/8",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "224.0.0.0/3",
+]
+mtu_size = 1500
+EOF
+  ./standalone_client >>"/output/$LOG_FILE_NAME" 2>&1
 else
-    {
-      echo "{"
-      echo "$COMMON_CONFIG"
-      echo "
-    \"socks_info\": {
-        \"socks_user\": \"\",
-        \"socks_pass\": \"\",
-        \"socks_host\": \"127.0.0.1\",
-        \"socks_port\": \"$SOCKS_PORT\"
-    }"
-      echo "}"
-    } >>"standalone_client.conf"
-    ./standalone_client >> /output/$LOG_FILE_NAME 2>&1
+  cat >>standalone_client.toml <<EOF
+$COMMON_CONFIG
+
+[listener.socks]
+address = "127.0.0.1:$SOCKS_PORT"
+EOF
+  ./standalone_client >>"/output/$LOG_FILE_NAME" 2>&1
 fi

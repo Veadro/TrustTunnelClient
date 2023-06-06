@@ -2,6 +2,7 @@
 
 #include <cstring>
 
+#include <magic_enum.hpp>
 #include <zlib.h>
 
 #include "common/utils.h"
@@ -146,7 +147,7 @@ static int on_headers_complete(http_parser *parser) {
         h1s->body_callback_error = HTTP_SESSION_UPGRADE;
     }
 
-    log_sess(session, trace, "Returned {}, cb error {}", skip, h1s->body_callback_error);
+    log_sess(session, trace, "Returned {}, cb error {}", skip, magic_enum::enum_name(h1s->body_callback_error));
     return skip;
 }
 
@@ -190,7 +191,7 @@ static int on_body(http_parser *parser, const char *at, size_t length) {
     }
 
 out:
-    log_sess(session, trace, "Returned {}", r);
+    log_sess(session, trace, "Returned {}", magic_enum::enum_name(r));
     h1s->body_callback_error = r;
     return r;
 }

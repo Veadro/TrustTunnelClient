@@ -53,7 +53,6 @@ Checks: '
   -modernize-deprecated-headers,
   -readability-duplicate-include,
   -cert-err33-c,
-  -misc-const-correctness,
   -misc-use-anonymous-namespace,
   '
 
@@ -82,4 +81,7 @@ CheckOptions: [
 
   { key: readability-identifier-naming.ConstantCase, value: UPPER_CASE },
   { key: readability-identifier-naming.ValueTemplateParameterCase, value: UPPER_CASE },
+
+  { key: cppcoreguidelines-avoid-do-while.IgnoreMacros, value: true },
+  { key: misc-const-correctness.AnalyzeValues, value: false },
 ]

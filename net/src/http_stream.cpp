@@ -209,7 +209,7 @@ static bool is_zlib_hdr(const uint8_t *data) {
 
 int http_stream_decompress(
         HttpStream *h_stream, const uint8_t *data, size_t length, BodyDataOutputCallback data_output) {
-    log_stream(h_stream, trace, "(data={}, length={})", data, length);
+    log_stream(h_stream, trace, "(data={}, length={})", (void *) data, length);
     int r = 0;
 
     if (h_stream->decompress_stream == nullptr) {

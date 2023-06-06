@@ -23,35 +23,22 @@ RUN cd "$ENDPOINT_DIR" && \
         -subj "/C=de/CN=$ENDPOINT_HOSTNAME" \
         -addext "subjectAltName = DNS:*.$ENDPOINT_HOSTNAME"
 
-RUN echo "{\n\
-  \"listen_address\": \"[::]:4433\",\n\
-  \"allow_private_network_connections\": true,\n\
-  \"ipv6_available\": true, \n\
-  \"listen_protocols\": [\n\
-    {\n\
-      \"http1\": {}\n\
-    },\n\
-    {\n\
-      \"http2\": {}\n\
-    },\n\
-    {\n\
-      \"quic\": {}\n\
-    }\n\
-  ],\n\
-  \"icmp\": {\n\
-    \"interface_name\": \"eth0\" \n\
-  } \n\
-}" >>$CONFIG_FILE
+RUN echo "\
+listen_address = \"[::]:4433\"\n\
+allow_private_network_connections = true\n\
+[listen_protocols.http1]\n\
+[listen_protocols.http2]\n\
+[listen_protocols.quic]\n\
+[icmp]\n\
+interface_name = \"eth0\"\n\
+" >>$CONFIG_FILE
 
-RUN echo "{\n\
-  \"main_hosts\": [\n\
-    {\n\
-      \"hostname\": \"$ENDPOINT_HOSTNAME\",\n\
-      \"cert_chain_path\": \"cert.pem\",\n\
-      \"private_key_path\": \"key.pem\"\n\
-    }\n\
-  ]\n\
-}" >>$TLS_HOSTS_SETTINGS_FILE
+RUN echo "\
+[[main_hosts]]\n\
+hostname = \"$ENDPOINT_HOSTNAME\"\n\
+cert_chain_path = \"cert.pem\"\n\
+private_key_path = \"key.pem\"\n\
+" >>$TLS_HOSTS_SETTINGS_FILE
 
 ENV LOG_LEVEL=$LOG_LEVEL \
     CONFIG_FILE=$CONFIG_FILE \

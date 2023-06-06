@@ -34,9 +34,10 @@ class VpnLibsConan(ConanFile):
                 self.requires(req)
 
     def build_requirements(self):
-        self.build_requires("gtest/1.12.1")
         self.build_requires("cxxopts/3.0.0")
+        self.build_requires("gtest/1.12.1")
         self.build_requires("nlohmann_json/3.10.5")
+        self.build_requires("tomlplusplus/3.3.0")
 
     def configure(self):
         self.options["gtest"].build_gmock = False
