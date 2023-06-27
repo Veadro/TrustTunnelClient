@@ -52,20 +52,6 @@ bool sockaddr_is_loopback(const struct sockaddr *addr) {
     }
 }
 
-bool sockaddr_is_private(const struct sockaddr *addr) {
-    switch (addr->sa_family) {
-    case AF_INET:
-        return (((ntohl(((sockaddr_in *) addr)->sin_addr.s_addr) & 0xff000000) == 0x0a000000)      // 10.0.0.0/8
-                || ((ntohl(((sockaddr_in *) addr)->sin_addr.s_addr) & 0xfff00000) == 0xac100000)   // 172.16.0.0/12
-                || ((ntohl(((sockaddr_in *) addr)->sin_addr.s_addr) & 0xffff0000) == 0xc0a80000)); // 192.168.0.0/16
-    case AF_INET6:
-        return (IN6_IS_ADDR_LINKLOCAL(&((struct sockaddr_in6 *) addr)->sin6_addr)         // fe80::/10
-                || IN6_IS_ADDR_UNIQUE_LOCAL(&((struct sockaddr_in6 *) addr)->sin6_addr)); // fc00::/7
-    default:
-        return false;
-    }
-}
-
 uint16_t sockaddr_get_raw_port(const struct sockaddr *addr) {
     switch (addr->sa_family) {
     case AF_INET:

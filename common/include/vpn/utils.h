@@ -215,10 +215,6 @@ bool sockaddr_is_any(const struct sockaddr *addr);
  */
 bool sockaddr_is_loopback(const struct sockaddr *addr);
 /**
- * Check if address is in private network
- */
-bool sockaddr_is_private(const struct sockaddr *addr);
-/**
  * Get port in network byte order from sockaddr
  * @param addr sockaddr with ip
  * @return port
