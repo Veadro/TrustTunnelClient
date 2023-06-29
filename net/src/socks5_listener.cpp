@@ -1186,12 +1186,15 @@ static void sock_handler(void *arg, TcpSocketEvent what, void *data) {
         return;
     }
 
-    khiter_t i = kh_get(connections_by_id, listener->connections, conn_id);
-    if (i == kh_end(listener->connections)) {
+    Connection *conn = [](auto &connections, uint32_t conn_id) {
+        khiter_t i = kh_get(connections_by_id, connections, conn_id);
+        return (i != kh_end(connections)) ? kh_value(connections, i) : nullptr;
+    }(listener->connections, conn_id);
+    if (conn == nullptr) {
         return;
     }
 
-    Connection *conn = kh_value(listener->connections, i);
+    VpnError error = {};
 
     switch (what) {
     case TCP_SOCKET_EVENT_CONNECTED: {
@@ -1222,7 +1225,6 @@ static void sock_handler(void *arg, TcpSocketEvent what, void *data) {
 
             log_conn(listener, conn->id, conn->proto, dbg, "Processing auth request...");
 
-            VpnError error = {};
             Socks5AuthResponse resp = {SOCKS5_VER, 0};
             int chosen_method;
             int supported_method;
@@ -1318,7 +1320,6 @@ static void sock_handler(void *arg, TcpSocketEvent what, void *data) {
 
             log_conn(listener, conn->id, conn->proto, dbg, "Username/password processing failed");
 
-            VpnError error;
         uname_passwd_send_resp:
             error = tcp_socket_write(conn->socket, (uint8_t *) &resp, sizeof(resp));
             if (error.code != 0) {
@@ -1402,13 +1403,11 @@ static void sock_handler(void *arg, TcpSocketEvent what, void *data) {
                     tcp_socket_set_read_enabled(conn->socket, false);
                     log_conn(listener, conn->id, conn->proto, dbg, "Request processed, waiting for connect result");
                 }
+            } else if (complete_udp_association(listener, conn)) {
+                conn->state = S5CONNS_ESTABLISHED;
+                log_conn(listener, conn->id, conn->proto, dbg, "Request processed, UDP relay set up");
             } else {
-                if (complete_udp_association(listener, conn)) {
-                    conn->state = S5CONNS_ESTABLISHED;
-                    log_conn(listener, conn->id, conn->proto, dbg, "Request processed, UDP relay set up");
-                } else {
-                    conn->state = S5CONNS_FAILED;
-                }
+                conn->state = S5CONNS_FAILED;
             }
 
             break;
@@ -1419,7 +1418,7 @@ static void sock_handler(void *arg, TcpSocketEvent what, void *data) {
 
             addr_len = addr_length_from_request((Socks5AddressType) req->atyp, req->dst_addr);
             size_t reply_size = sizeof(Socks5Reply) + addr_len + 2;
-            constexpr size_t REPLY_BUFFER_SIZE = 32;
+            constexpr size_t REPLY_BUFFER_SIZE = sizeof(Socks5Reply) + 1024;
             uint8_t reply_data[REPLY_BUFFER_SIZE];
             Socks5Reply *reply = (Socks5Reply *) reply_data;
             reply->ver = SOCKS5_VER;
@@ -1431,7 +1430,7 @@ static void sock_handler(void *arg, TcpSocketEvent what, void *data) {
             int port = htons(sockaddr_get_port((struct sockaddr *) &local_addr));
             memcpy(reply->bnd_addr + addr_len, &port, 2);
 
-            VpnError error = tcp_socket_write(conn->socket, (uint8_t *) reply_data, reply_size);
+            error = tcp_socket_write(conn->socket, (uint8_t *) reply_data, reply_size);
             if (error.code != 0) {
                 log_conn(listener, conn->id, conn->proto, err, "Failed to send socks response: {} ({})",
                         safe_to_string_view(error.text), error.code);
@@ -1491,14 +1490,12 @@ static void sock_handler(void *arg, TcpSocketEvent what, void *data) {
         const VpnError *sock_event = (VpnError *) data;
 
         if (is_udp_association_tcp_connection(listener, conn)) {
-            dbglog(g_logger, "Error on TCP socket of UDP assocation session");
+            dbglog(g_logger, "Error on TCP socket of UDP association session");
             terminate_udp_association(listener, conn, *sock_event);
             break;
-        } else {
-            Socks5ConnectionClosedEvent event = {conn->id, *sock_event};
-            listener->handler.func(listener->handler.arg, SOCKS5L_EVENT_CONNECTION_CLOSED, &event);
         }
 
+        error = *sock_event;
         goto close;
     }
     case TCP_SOCKET_EVENT_SENT: {
@@ -1583,7 +1580,7 @@ static void sock_handler(void *arg, TcpSocketEvent what, void *data) {
 close:
     assert(!is_udp_association_tcp_connection(listener, conn));
     if (conn->state >= S5CONNS_WAITING_CONNECT_RESULT) {
-        Socks5ConnectionClosedEvent event = {conn->id, {}};
+        Socks5ConnectionClosedEvent event = {conn->id, error};
         listener->handler.func(listener->handler.arg, SOCKS5L_EVENT_CONNECTION_CLOSED, &event);
     }
     destroy_connection(listener, conn);

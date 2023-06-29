@@ -497,9 +497,8 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
                 return;
             case ALUA_BLOCK:
                 log_conn(this, conn, dbg, "Dropped QUIC connection");
-                conn->listener->turn_read(conn->client_id, false);
-                close_client_side_connection(this, conn, -1, true);
-                event->result = -1;
+                conn->upstream->update_flow_control(event->id, {});
+                close_client_side_connection(this, conn, -1, /* async */ false);
                 return;
             }
         }
