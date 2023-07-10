@@ -105,7 +105,7 @@ struct VpnClientLive : public ::testing::Test {
         GTEST_SKIP() << "Comment me out if you want to run these tests";
 #endif
 
-        ag::vpn_network_manager_update_system_dns({{{"8.8.8.8"}}});
+        ag::vpn_network_manager_update_system_dns({{{"9.9.9.9"}}});
 
         ag::VpnError error = this->vpn->init(&this->settings);
         ASSERT_EQ(error.code, ag::VPN_EC_NOERROR) << error.text;

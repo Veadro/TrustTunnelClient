@@ -17,11 +17,10 @@ WORKDIR /test/
 RUN cd "$ENDPOINT_DIR" && \
     cargo build --release --bin vpn_endpoint && \
     mv ./target/release/vpn_endpoint /test/ && \
-    cd examples/my_vpn && \
-    openssl req -config openssl.conf -new -x509 -sha256 -newkey rsa:2048 -nodes -days 1000 \
+    openssl req -new -x509 -sha256 -newkey rsa:2048 -nodes -days 1000 \
         -keyout /test/key.pem -out /test/cert.pem \
         -subj "/C=de/CN=$ENDPOINT_HOSTNAME" \
-        -addext "subjectAltName = DNS:*.$ENDPOINT_HOSTNAME"
+        -addext "subjectAltName = DNS:$ENDPOINT_HOSTNAME, DNS:*.$ENDPOINT_HOSTNAME"
 
 RUN echo "\
 listen_address = \"[::]:4433\"\n\

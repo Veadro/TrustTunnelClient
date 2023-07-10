@@ -392,6 +392,7 @@ void VpnDnsResolver::resolve_queue(VpnDnsResolverQueue queue_type) {
                                             ResolveState::Query{
                                                     .id = entry_id,
                                                     .record_type = record_type,
+                                                    .name = entry.name,
                                                     .queue_kind = queue_type,
                                             })
                                     .first;

@@ -131,18 +131,16 @@ Run live test:
             
             set -x -e
 
-            cd ./examples/my_vpn
+            ENDPOINT_HOSTNAME="localhost"
 
-            OPENSSL_CONF_FILE="openssl.conf"
-            KEY_FILE_NAME="key.pem"
-            CERT_FILE_NAME="cert.pem"
+            cargo run --release --bin setup_wizard -- --mode non-interactive  \
+              --address "0.0.0.0:4433" \
+              --creds premium:premium  \
+              --hostname "$ENDPOINT_HOSTNAME"  \
+              --lib-settings vpn.toml  \
+              --hosts-settings tls_hosts.toml
 
-            if [ ! -f "$KEY_FILE_NAME" ] || [ ! -f "$CERT_FILE_NAME" ]; then
-              openssl req -config "$OPENSSL_CONF_FILE" -new -x509 -sha256 -newkey rsa:2048 -nodes -days 1000 \
-              -keyout "$KEY_FILE_NAME" -out "$CERT_FILE_NAME" -subj "/C=de/CN=www.example.com"
-            fi
-
-            cargo build --release
+            cargo build --release --bin vpn_endpoint
         description: Build vpn-libs-endpoint
         working-dir: vpn-libs-endpoint
     - script:
@@ -156,8 +154,8 @@ Run live test:
 
             export SRC_ROOT=${PWD}
 
-            cd vpn-libs-endpoint/examples/my_vpn
-            ../../target/release/vpn_endpoint vpn.toml tls_hosts.toml > /dev/null 2>&1 &
+            cd vpn-libs-endpoint
+            ./target/release/vpn_endpoint vpn.toml tls_hosts.toml > /dev/null 2>&1 &
             echo "Start endpoint"
             sleep 3
 
