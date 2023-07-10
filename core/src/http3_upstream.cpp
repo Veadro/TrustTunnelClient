@@ -1174,28 +1174,30 @@ void Http3Upstream::poll_tcp_connections() {
 }
 
 void Http3Upstream::retry_connect_requests() {
-    for (auto i = m_retriable_tcp_requests.begin(); i != m_retriable_tcp_requests.end();) {
-        RetriableTcpConnectRequest &request = i->second;
+    auto requests = std::exchange(m_retriable_tcp_requests, {});
+    while (!requests.empty()) {
+        auto node = requests.extract(requests.begin());
+        uint64_t conn_id = node.key();
+        const RetriableTcpConnectRequest &request = node.mapped();
 
         auto [stream_id, is_retriable] = this->send_connect_request(&request.dst_addr, request.app_name);
         if (stream_id.has_value()) {
-            TcpConnection *conn = &m_tcp_connections[i->first];
+            TcpConnection *conn = &m_tcp_connections[conn_id];
             conn->stream_id = stream_id.value();
-            m_tcp_conn_by_stream_id[stream_id.value()] = i->first;
-            i = m_retriable_tcp_requests.erase(i);
+            m_tcp_conn_by_stream_id[stream_id.value()] = conn_id;
             continue;
         }
 
         if (is_retriable) {
-            ++i;
-            continue;
+            requests.insert(std::move(node));
+            break;
         }
 
-        ServerError error = {i->first, {-1, "Failed to send connect request"}};
+        ServerError error = {conn_id, {-1, "Failed to send connect request"}};
         this->handler.func(this->handler.arg, SERVER_EVENT_ERROR, &error);
-        i = m_retriable_tcp_requests.erase(i);
     }
 
+    m_retriable_tcp_requests = std::move(requests);
     this->flush_pending_quic_data();
 }
 
