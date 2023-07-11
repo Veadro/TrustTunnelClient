@@ -1,16 +1,5 @@
 cmake-build-*/
-.vscode/
-.idea/
 build/
-
-# OS X
-.DS_Store
-
-# Debug files
-*.dSYM
-
-# Rust
-Cargo.lock
 
 # Conan
 # fixme: Remove when the repo will be adapted to out-of-tree build model.

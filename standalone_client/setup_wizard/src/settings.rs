@@ -135,7 +135,7 @@ If not specified, the endpoint certificate is verfied using the system storage."
         #[serde(default)]
         pub upstream_protocol: String,
         #{doc("Fallback protocol to be used in case the main one fails [<none>, http2, http3]")}
-        pub fallback_upstream_protocol: Option<String>,
+        pub upstream_fallback_protocol: Option<String>,
     }
 }
 
@@ -314,7 +314,7 @@ fn build_endpoint(template: Option<&Endpoint>) -> Endpoint {
             ),
         upstream_protocol: opt_field!(template, upstream_protocol).cloned()
             .unwrap_or_else(Endpoint::default_upstream_protocol),
-        fallback_upstream_protocol: opt_field!(template, fallback_upstream_protocol).cloned()
+        upstream_fallback_protocol: opt_field!(template, upstream_fallback_protocol).cloned()
             .unwrap_or_default(),
         ..Default::default()
     };

@@ -57,8 +57,8 @@ fn fill_endpoint_table(mut doc: Document, settings: &Settings) -> Document {
         settings.endpoint.certificate.as_deref().unwrap_or_default()
     );
     endpoint["upstream_protocol"] = value(&settings.endpoint.upstream_protocol);
-    endpoint["fallback_upstream_protocol"] = value(
-        settings.endpoint.fallback_upstream_protocol.as_deref().unwrap_or_default()
+    endpoint["upstream_fallback_protocol"] = value(
+        settings.endpoint.upstream_fallback_protocol.as_deref().unwrap_or_default()
     );
 
     doc

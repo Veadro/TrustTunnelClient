@@ -81,7 +81,7 @@ upstream_fallback_protocol = ""
     Endpoint::doc_certificate().to_toml_comment(),
     Endpoint::doc_upstream_protocol().to_toml_comment(),
     Endpoint::default_upstream_protocol(),
-    Endpoint::doc_fallback_upstream_protocol().to_toml_comment(),
+    Endpoint::doc_upstream_fallback_protocol().to_toml_comment(),
 ));
 
 pub const COMMON_LISTENER_TABLE: &str = r#"

@@ -43,6 +43,23 @@ else (WIN32)
     set(WIZARD_EXE_NAME setup_wizard)
 endif (WIN32)
 
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(TARGET_SUBDIR debug)
+else ()
+    set(CARGO_BUILD_TYPE --release)
+    set(TARGET_SUBDIR release)
+endif ()
+
+if (APPLE)
+    if (CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64")
+        set(CARGO_TARGET --target x86_64-apple-darwin)
+        set(TARGET_SUBDIR "x86_64-apple-darwin/${TARGET_SUBDIR}")
+    elseif (CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
+        set(CARGO_TARGET --target aarch64-apple-darwin)
+        set(TARGET_SUBDIR "aarch64-apple-darwin/${TARGET_SUBDIR}")
+    endif ()
+endif (APPLE)
+
 ExternalProject_Add(setup_wizard
         SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/setup_wizard
         BUILD_IN_SOURCE TRUE
@@ -50,9 +67,9 @@ ExternalProject_Add(setup_wizard
         UPDATE_COMMAND ""
         PATCH_COMMAND ""
         CONFIGURE_COMMAND ""
-        BUILD_COMMAND ${CMAKE_COMMAND} -E env cargo build --bin setup_wizard
+        BUILD_COMMAND ${CMAKE_COMMAND} -E env cargo build ${CARGO_BUILD_TYPE} ${CARGO_TARGET} --bin setup_wizard
         TEST_COMMAND ""
-        INSTALL_COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/setup_wizard/target/debug/${WIZARD_EXE_NAME} ${CMAKE_CURRENT_BINARY_DIR}
+        INSTALL_COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/setup_wizard/target/${TARGET_SUBDIR}/${WIZARD_EXE_NAME} ${CMAKE_CURRENT_BINARY_DIR}
         )
 
 add_custom_target(run_setup_wizard)
