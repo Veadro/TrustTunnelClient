@@ -139,7 +139,7 @@ public:
 
 using Exclusion = std::string_view;
 using CheckedDomain = std::string_view;
-using TestSample = std::tuple<VpnMode, Exclusion, CheckedDomain>;
+using TestSample = std::tuple<VpnMode, VpnConnectAction, Exclusion, CheckedDomain>;
 class DnsRouting : public testing::TestWithParam<TestSample> {
 public:
     DnsRouting()
@@ -253,7 +253,7 @@ public:
 class NoProxy : public DnsRouting {};
 
 TEST_P(NoProxy, Test) {
-    auto [mode, exclusion, domain] = GetParam();
+    auto [mode, action, exclusion, domain] = GetParam();
     vpn.update_exclusions(mode, exclusion);
 
     ASSERT_NO_FATAL_FAILURE(raise_dns_request(domain));
@@ -277,13 +277,16 @@ TEST_P(NoProxy, Test) {
 }
 
 INSTANTIATE_TEST_SUITE_P(DnsRouting, NoProxy,
-        testing::Combine(testing::Values(VPN_MODE_GENERAL, VPN_MODE_SELECTIVE), testing::Values("example.com"),
+        testing::Combine(
+                testing::Values(VPN_MODE_GENERAL, VPN_MODE_SELECTIVE),
+                testing::Values(VPN_CA_DEFAULT),
+                testing::Values("example.com"),
                 testing::Values("example.com", "github.com")));
 
 class WithProxy : public DnsRouting {};
 
 TEST_P(WithProxy, Test) {
-    auto [mode, exclusion, domain] = GetParam();
+    auto [mode, action, exclusion, domain] = GetParam();
     vpn.update_exclusions(mode, exclusion);
     vpn.dns_proxy = std::make_unique<DnsProxyAccessor>(DnsProxyAccessor::Parameters{});
 
@@ -311,7 +314,10 @@ TEST_P(WithProxy, Test) {
 }
 
 INSTANTIATE_TEST_SUITE_P(DnsRouting, WithProxy,
-        testing::Combine(testing::Values(VPN_MODE_GENERAL, VPN_MODE_SELECTIVE), testing::Values("example.com"),
+        testing::Combine(
+                testing::Values(VPN_MODE_GENERAL, VPN_MODE_SELECTIVE),
+                testing::Values(VPN_CA_DEFAULT),
+                testing::Values("example.com"),
                 testing::Values("example.com", "github.com")));
 
 class AppInitiatedDnsRouting : public DnsRouting {
@@ -348,3 +354,126 @@ TEST_F(AppInitiatedDnsRouting, NonMatchingDomain) {
     ASSERT_NO_FATAL_FAILURE(raise_dns_request("example.org"));
     ASSERT_EQ(bypass_upstream->last_send, 0);
 }
+
+class CustomDnsRouting : public DnsRouting {
+public:
+    void SetUp() override {
+        vpn_network_manager_update_system_dns({
+                .main = {SystemDnsServer{
+                        .address = "127.0.0.53",
+                }},
+        });
+        
+        vpn.parameters.handler = {&vpn_handler, this};
+        vpn.parameters.network_manager = network_manager.get();
+        
+        vpn.endpoint_upstream = std::make_unique<TestUpstream>();
+        ASSERT_TRUE(vpn.endpoint_upstream->init(&vpn, {&redirect_upstream_handler, this}));
+        redirect_upstream = (TestUpstream *) vpn.endpoint_upstream.get();
+        vpn.bypass_upstream = std::make_unique<TestUpstream>();
+        ASSERT_TRUE(vpn.bypass_upstream->init(&vpn, {&bypass_upstream_handler, this}));
+        bypass_upstream = (TestUpstream *) vpn.bypass_upstream.get();
+    }
+    
+    void open_connection(VpnConnectAction callback_action, VpnConnectAction expected_action) {
+        vpn.client_listener = std::make_unique<TestListener>();
+        ASSERT_EQ(ClientListener::InitResult::SUCCESS, vpn.client_listener->init(&vpn, {&listener_handler, this}));
+        client_listener = (TestListener *) vpn.client_listener.get();
+        
+        ASSERT_TRUE(tun.init(&vpn));
+        tun.upstream_handler(redirect_upstream, SERVER_EVENT_SESSION_OPENED, nullptr);
+
+        ASSERT_NO_FATAL_FAILURE(raise_client_connection(client_id));
+
+        std::optional<VpnConnectAction> action = tun.finalize_connect_action({
+                .id = client_id,
+                .action = callback_action,
+                .appname = "some",
+                .uid = 1,
+        });
+        ASSERT_EQ(action, expected_action);
+        tun.complete_connect_request(client_id, action);
+        run_event_loop_once();
+
+        ASSERT_FALSE(client_listener->connections[client_id].read_enabled);
+        tun.listener_handler(client_listener, CLIENT_EVENT_CONNECTION_ACCEPTED, &client_id);
+        ASSERT_TRUE(client_listener->connections[client_id].read_enabled);
+    }
+};
+
+class DnsAddressExcluded : public CustomDnsRouting {};
+
+TEST_P(DnsAddressExcluded, CheckCreatedUpstreams) {
+    auto [mode, action, exclusion, domain] = GetParam();
+    
+    vpn.update_exclusions(mode, exclusion);
+    
+    ASSERT_NO_FATAL_FAILURE(open_connection(action, action));
+    ASSERT_NO_FATAL_FAILURE(raise_dns_request(domain));
+    
+    switch (mode) {
+    case VPN_MODE_GENERAL:
+        if (exclusion.find(domain) != std::string::npos) {
+            ASSERT_EQ(bypass_upstream->connections.size(), 1);
+            ASSERT_EQ(redirect_upstream->connections.size(), 0);
+        } else {
+            ASSERT_EQ(redirect_upstream->connections.size(), 1);
+            ASSERT_EQ(bypass_upstream->connections.size(), 0);
+        }
+        break;
+    case VPN_MODE_SELECTIVE:
+        if (exclusion.find(domain) != std::string::npos) {
+            ASSERT_EQ(redirect_upstream->connections.size(), 1);
+            ASSERT_EQ(bypass_upstream->connections.size(), 0);
+        } else {
+            ASSERT_EQ(bypass_upstream->connections.size(), 1);
+            ASSERT_EQ(redirect_upstream->connections.size(), 0);
+        }
+        break;
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(DnsAddressExcluded, DnsAddressExcluded,
+        testing::Values(
+                std::make_tuple(VPN_MODE_GENERAL, VPN_CA_DEFAULT, "2.2.2.2/32", "example.com"),
+                std::make_tuple(VPN_MODE_GENERAL, VPN_CA_DEFAULT, "2.2.2.2/32 example.com", "example.com"),
+                std::make_tuple(VPN_MODE_SELECTIVE, VPN_CA_DEFAULT, "2.2.2.2/32", "example.com"),
+                std::make_tuple(VPN_MODE_SELECTIVE, VPN_CA_DEFAULT, "2.2.2.2/32 example.com", "example.com")
+                ));
+
+class DnsRoutingCustomAction : public CustomDnsRouting {};
+
+TEST_P(DnsRoutingCustomAction, CheckCreatedUpstreams) {
+    auto [mode, action, exclusion, domain] = GetParam();
+    
+    vpn.update_exclusions(mode, exclusion);
+    
+    ASSERT_NO_FATAL_FAILURE(open_connection(action, action));
+    ASSERT_NO_FATAL_FAILURE(raise_dns_request(domain));
+    
+    if (action == VPN_CA_FORCE_BYPASS) {
+        ASSERT_EQ(bypass_upstream->connections.size(), 1);
+        ASSERT_EQ(redirect_upstream->connections.size(), 0);
+    } else if (action == VPN_CA_FORCE_REDIRECT) {
+        ASSERT_EQ(redirect_upstream->connections.size(), 1);
+        ASSERT_EQ(bypass_upstream->connections.size(), 0);
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(CustomAction, DnsRoutingCustomAction,
+        testing::Values(
+                std::make_tuple(VPN_MODE_GENERAL, VPN_CA_FORCE_REDIRECT, "2.2.2.2/32", "example.com"),
+                std::make_tuple(VPN_MODE_GENERAL, VPN_CA_FORCE_BYPASS, "2.2.2.2/32", "example.com"),
+                std::make_tuple(VPN_MODE_SELECTIVE, VPN_CA_FORCE_REDIRECT, "2.2.2.2/32", "example.com"),
+                std::make_tuple(VPN_MODE_SELECTIVE, VPN_CA_FORCE_BYPASS, "2.2.2.2/32", "example.com"),
+                
+                std::make_tuple(VPN_MODE_GENERAL, VPN_CA_FORCE_REDIRECT, "", "example.com"),
+                std::make_tuple(VPN_MODE_GENERAL, VPN_CA_FORCE_BYPASS, "", "example.com"),
+                std::make_tuple(VPN_MODE_SELECTIVE, VPN_CA_FORCE_REDIRECT, "", "example.com"),
+                std::make_tuple(VPN_MODE_SELECTIVE, VPN_CA_FORCE_BYPASS, "", "example.com"),
+                
+                std::make_tuple(VPN_MODE_GENERAL, VPN_CA_FORCE_REDIRECT, "example.com", "example.com"),
+                std::make_tuple(VPN_MODE_GENERAL, VPN_CA_FORCE_BYPASS, "example.com", "example.com"),
+                std::make_tuple(VPN_MODE_SELECTIVE, VPN_CA_FORCE_REDIRECT, "example.com", "example.com"),
+                std::make_tuple(VPN_MODE_SELECTIVE, VPN_CA_FORCE_BYPASS, "example.com", "example.com")
+                ));

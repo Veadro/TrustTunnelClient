@@ -785,7 +785,8 @@ std::optional<VpnConnectAction> Tunnel::finalize_connect_action(ConnectRequestRe
 
     const DomainFilter *filter = &this->vpn->domain_filter;
     std::optional<VpnConnectAction> out;
-    if (request_result.action.has_value() && request_result.action.value() != VPN_CA_DEFAULT) {
+    if ((request_result.action.has_value() && request_result.action.value() != VPN_CA_DEFAULT)
+            || conn->flags.test(CONNF_PLAIN_DNS_CONNECTION)) {
         out = request_result.action;
     } else if (const sockaddr_storage *dst = std::get_if<sockaddr_storage>(&conn->addr.dst); dst != nullptr) {
         DomainFilterMatchStatus filter_result = filter->match_tag(conn->make_tag());
