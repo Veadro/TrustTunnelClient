@@ -1,6 +1,7 @@
 #ifdef __APPLE__
 #include <net/if.h>
 #include <netinet/in.h>
+#include "net/mac_dns_settings_manager.h"
 #endif // __APPLE__
 
 #ifdef __linux__
@@ -395,6 +396,9 @@ static int listener_runner() {
         errlog(g_logger, "Failed to update DNS servers");
         return 1;
     }
+#ifdef __APPLE__
+    auto dns_manager = VpnMacDnsSettingsManager::create(AG_UNFILTERED_DNS_IPS_V4[0]);
+#endif // __APPLE__
 #endif
 
     VpnSettings settings = {

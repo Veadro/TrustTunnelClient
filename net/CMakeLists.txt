@@ -40,6 +40,7 @@ set(SOURCE_FILES
 string(TOLOWER "${CMAKE_OSX_SYSROOT}" OSX_SYSROOT_LC)
 if(APPLE AND OSX_SYSROOT_LC MATCHES "/macosx([0-9]+\.)+sdk$")
     list(APPEND SOURCE_FILES ${NET_SOURCE_DIR}/os_tunnel_mac.cpp)
+    list(APPEND SOURCE_FILES ${NET_SOURCE_DIR}/mac_dns_settings_manager.mm)
 elseif(WIN32)
     list(APPEND SOURCE_FILES ${NET_SOURCE_DIR}/os_tunnel_win.cpp)
     list(APPEND SOURCE_FILES ${NET_SOURCE_DIR}/wfp_firewall.cpp)
@@ -58,6 +59,10 @@ if (NOT MSVC)
     target_compile_options(vpnlibs_net PRIVATE
             -Wno-unknown-warning-option -Wno-macro-redefined -Wno-unused-parameter
             -Wno-missing-field-initializers -Wno-c99-designator)
+    if(APPLE AND OSX_SYSROOT_LC MATCHES "/macosx([0-9]+\.)+sdk$")
+        target_compile_options(vpnlibs_net PRIVATE -fobjc-arc)
+        target_link_libraries(vpnlibs_net "-framework Foundation" "-framework SystemConfiguration")
+    endif()
 else()
     target_include_directories(vpnlibs_net PRIVATE ${THIRD_PARTY_DIR}/wintun/include)
 endif()
