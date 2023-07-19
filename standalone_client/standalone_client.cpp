@@ -302,7 +302,8 @@ static VpnListener *make_tun_listener() {
     win_settings.wintun_lib = g_wintun;
     win_settings.adapter_name = win_defaults->adapter_name;
     static constexpr const char *DNS_SERVERS[] = {
-            "192.0.0.8",
+            // should be null-terminated
+            AG_UNFILTERED_DNS_IPS_V4[0].data(),
     };
     win_settings.dns_servers = {
             .data = (const char **) DNS_SERVERS,
