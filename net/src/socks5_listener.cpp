@@ -513,6 +513,12 @@ static void send_pending_udp_data(void *arg, TaskId) {
             event.data = pkt.data();
             event.length = pkt.size();
             self->handler.func(self->handler.arg, SOCKS5L_EVENT_READ, &event);
+            if (event.result < 0) {
+                Socks5ConnectionClosedEvent close_event = {conn->id, {-1, "Read handler failed"}};
+                self->handler.func(self->handler.arg, SOCKS5L_EVENT_CONNECTION_CLOSED, &close_event);
+                destroy_connection(self, conn);
+                break;
+            }
         }
     }
 }

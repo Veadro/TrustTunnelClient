@@ -26,6 +26,7 @@ struct CompleteCtx {
 };
 
 static std::atomic_int g_next_mux_id = 0; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+static constexpr Secs TIMER_PERIOD{15};
 
 static std::vector<uint8_t> compose_udp_packet(
         const sockaddr *src, const sockaddr *dst, std::string_view app_name, const uint8_t *data, size_t length) {
@@ -115,8 +116,8 @@ bool HttpUdpMultiplexer::open_connection(uint64_t conn_id, const TunnelAddressPa
         return false;
     }
 
-    auto i = m_connections.find(conn_id);
-    if (i != m_connections.end()) {
+    auto [iter, inserted] = m_connections.try_emplace(conn_id);
+    if (!inserted) {
         log_conn(this, conn_id, err, "Connection with such id already exists");
         assert(0);
         return false;
@@ -137,7 +138,7 @@ bool HttpUdpMultiplexer::open_connection(uint64_t conn_id, const TunnelAddressPa
         [[fallthrough]];
     }
     case MS_ESTABLISHED:
-        Connection *conn = &m_connections[conn_id];
+        Connection *conn = &iter->second;
         conn->timeout = steady_clock::now() + milliseconds(VPN_DEFAULT_UDP_TIMEOUT_MS);
         conn->open_task_id = event_loop::submit(upstream->vpn->parameters.ev_loop,
                 {new CompleteCtx{this, conn_id}, complete_udp_connection, [](void *arg) {
@@ -146,9 +147,16 @@ bool HttpUdpMultiplexer::open_connection(uint64_t conn_id, const TunnelAddressPa
         break;
     }
 
-    Connection *conn = &m_connections[conn_id];
+    Connection *conn = &iter->second;
     conn->addr = *addr;
     conn->app_name = app_name;
+
+    if (m_timer_event == nullptr) {
+        m_timer_event.reset(event_new(
+                vpn_event_loop_get_base(upstream->vpn->parameters.ev_loop), -1, EV_PERSIST, timer_callback, this));
+        timeval tv = ms_to_timeval(Millis(TIMER_PERIOD).count());
+        event_add(m_timer_event.get(), &tv);
+    }
 
     return true;
 }
@@ -202,7 +210,7 @@ void HttpUdpMultiplexer::close_connection(uint64_t id) {
 }
 
 bool HttpUdpMultiplexer::check_connection(uint64_t id) const {
-    return m_connections.count(id) != 0;
+    return m_connections.contains(id);
 }
 
 ssize_t HttpUdpMultiplexer::send(uint64_t id, U8View data) {
@@ -214,12 +222,12 @@ ssize_t HttpUdpMultiplexer::send(uint64_t id, U8View data) {
     }
 
     Connection *conn = &i->second;
+    const sockaddr *src = (sockaddr *) &conn->addr.src;
     const sockaddr *dst = (sockaddr *) std::get_if<sockaddr_storage>(&conn->addr.dst);
-    log_conn(this, id, trace, "Sending UDP packet: {}->{} len={}", sockaddr_to_str((sockaddr *) &conn->addr.src),
-            sockaddr_to_str(dst), data.size());
+    log_conn(this, id, trace, "Sending UDP packet: {}->{} len={}", sockaddr_to_str(src), sockaddr_to_str(dst),
+            data.size());
 
-    std::vector<uint8_t> packet =
-            compose_udp_packet((sockaddr *) &conn->addr.src, dst, conn->app_name, data.data(), data.size());
+    std::vector<uint8_t> packet = compose_udp_packet(src, dst, conn->app_name, data.data(), data.size());
     int r = m_params.send_data_callback(m_params.parent, m_stream_id, {packet.data(), packet.size()});
     if (r == 0) {
         conn->timeout = steady_clock::now() + milliseconds(VPN_DEFAULT_UDP_TIMEOUT_MS);
@@ -381,18 +389,9 @@ void HttpUdpMultiplexer::timer_callback(evutil_socket_t, short, void *arg) {
 void HttpUdpMultiplexer::handle_response(const HttpHeaders *response) {
     assert(m_state == MS_ESTABLISHED);
 
-    if (response->status_code != 200) {
+    if (response->status_code != HTTP_OK_STATUS) {
         // will be raised in `close` after stream close
         m_pending_error = {0, {ag::utils::AG_ECONNREFUSED, "HTTP stream creation failed"}};
-        return;
-    }
-
-    if (m_timer_event == nullptr) {
-        ServerUpstream *upstream = m_params.parent;
-        m_timer_event.reset(event_new(
-                vpn_event_loop_get_base(upstream->vpn->parameters.ev_loop), -1, EV_PERSIST, timer_callback, this));
-        struct timeval tv = ms_to_timeval(VPN_DEFAULT_UDP_TIMEOUT_MS);
-        event_add(m_timer_event.get(), &tv);
     }
 }
 

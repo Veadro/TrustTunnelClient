@@ -394,10 +394,10 @@ void Http2Upstream::net_handler(void *arg, TcpSocketEvent what, void *data) {
     case TCP_SOCKET_EVENT_ERROR: {
         const VpnError *sock_event = (VpnError *) data;
 
-        // while opening a session or performing a health check we can't ignore time out
+        // while opening a session or performing a health check, we can't ignore time out
         if (sock_event->code == ag::utils::AG_ETIMEDOUT && upstream->m_session != nullptr
                 && !upstream->m_health_check_info.has_value()) {
-            log_upstream(upstream, dbg, "Ignore timed out socket");
+            log_upstream(upstream, trace, "Ignore timed out socket");
             break;
         }
 

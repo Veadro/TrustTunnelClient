@@ -23,7 +23,7 @@ typedef struct UdpCtx {
 /**
  * Handles received data from TCP/IP stack
  */
-bool udp_cm_receive(TcpipCtx *ctx, const ip_addr_t *src_addr, u16_t src_port, const ip_addr_t *dst_addr, u16_t dst_port,
+void udp_cm_receive(TcpipCtx *ctx, const ip_addr_t *src_addr, u16_t src_port, const ip_addr_t *dst_addr, u16_t dst_port,
         size_t iovlen, const struct evbuffer_iovec *iov);
 
 /**

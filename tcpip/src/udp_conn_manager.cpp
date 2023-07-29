@@ -100,13 +100,13 @@ static void process_forwarded_connection(UdpConnDescriptor *connection) {
     process_new_connection(connection);
 }
 
-bool udp_cm_receive(TcpipCtx *ctx, const ip_addr_t *src_addr, u16_t src_port, const ip_addr_t *dst_addr, u16_t dst_port,
+void udp_cm_receive(TcpipCtx *ctx, const ip_addr_t *src_addr, u16_t src_port, const ip_addr_t *dst_addr, u16_t dst_port,
         size_t iovlen, const evbuffer_iovec *iov) {
     auto *connection = (UdpConnDescriptor *) tcpip_get_connection_by_ip(
             &ctx->udp.connections, src_addr, src_port, dst_addr, dst_port);
     if (connection == nullptr) {
         dbglog(ctx->udp.log, "No matching connection was found");
-        return false;
+        return;
     }
 
     TcpipHandler *callbacks = &ctx->parameters.handler;
@@ -117,9 +117,9 @@ bool udp_cm_receive(TcpipCtx *ctx, const ip_addr_t *src_addr, u16_t src_port, co
     if (event.result >= 0) {
         update_output_statistics(&connection->common, event.result);
         tcpip_refresh_connection_timeout_with_interval(ctx, &connection->common, TCPIP_UDP_TIMEOUT_S);
+    } else {
+        udp_cm_close_descriptor(ctx, event.id);
     }
-
-    return event.result >= 0;
 }
 
 void udp_cm_complete_connect_request(TcpipCtx *ctx, UdpConnDescriptor *connection, TcpipAction action) {

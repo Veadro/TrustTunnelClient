@@ -37,11 +37,6 @@ enum Http3Upstream::Http3ErrorCode : uint64_t {
     H3_REQUEST_CANCELLED = 0x10c,
 };
 
-struct CompleteCtx {
-    Http3Upstream *upstream;
-    uint64_t id;
-};
-
 enum Http3Upstream::State : int {
     H3US_IDLE,
     H3US_ESTABLISHING,
@@ -74,8 +69,7 @@ Http3Upstream::Http3Upstream(int id, const VpnUpstreamProtocolConfig &protocol_c
 #endif
 }
 
-Http3Upstream::~Http3Upstream() {
-}
+Http3Upstream::~Http3Upstream() = default;
 
 bool Http3Upstream::init(VpnClient *vpn, ServerHandler handler) {
     if (!this->ServerUpstream::init(vpn, handler)) {
@@ -216,7 +210,7 @@ void Http3Upstream::close_session() {
     }
 
     if (m_quic_conn != nullptr) {
-        if (int r = quiche_conn_close(m_quic_conn.get(), true, 0, NULL, 0); r < 0 && r != QUICHE_ERR_DONE) {
+        if (int r = quiche_conn_close(m_quic_conn.get(), true, 0, nullptr, 0); r < 0 && r != QUICHE_ERR_DONE) {
             log_upstream(this, err, "Failed to close QUIC connection: {}", magic_enum::enum_name((quiche_error) r));
         } else {
             this->flush_pending_quic_data();
@@ -477,7 +471,7 @@ void Http3Upstream::on_icmp_request(IcmpEchoRequestEvent &event) {
 }
 
 void Http3Upstream::socket_handler(void *arg, UdpSocketEvent what, void *data) {
-    Http3Upstream *upstream = (Http3Upstream *) arg;
+    auto *upstream = (Http3Upstream *) arg;
 
     switch (what) {
     case UDP_SOCKET_EVENT_PROTECT: {
@@ -504,7 +498,7 @@ int Http3Upstream::verify_callback(X509_STORE_CTX *store_ctx, void *arg) {
 }
 
 void Http3Upstream::quic_timer_callback(evutil_socket_t, short, void *arg) {
-    Http3Upstream *upstream = (Http3Upstream *) arg;
+    auto *upstream = (Http3Upstream *) arg;
     log_upstream(upstream, dbg, "...");
 
     quiche_conn_on_timeout(upstream->m_quic_conn.get());
@@ -632,8 +626,8 @@ void Http3Upstream::on_udp_packet() {
         log_upstream(this, trace, "Read {} bytes from endpoint", r);
         r = quiche_conn_recv(quic_conn, buffer, r, &info);
         if (r < 0) {
-            log_upstream(this, err, "Failed to process packet: {}", magic_enum::enum_name((quiche_error) r));
-            return;
+            log_upstream(this, warn, "Failed to process packet: {}", magic_enum::enum_name((quiche_error) r));
+            break;
         }
 
         if (quiche_conn_is_closed(quic_conn)) {
@@ -855,8 +849,8 @@ void Http3Upstream::handle_response(uint64_t stream_id, const HttpHeaders *heade
     auto found = get_tcp_conn_by_stream_id(stream_id);
     if (found.second == nullptr) {
         log_stream(this, stream_id, dbg, "Got response on nonexistent connection");
-        assert(0);
         close_stream(stream_id, H3_REQUEST_CANCELLED);
+        assert(0);
         return;
     }
 
@@ -1208,7 +1202,7 @@ void Http3Upstream::complete_read(void *arg, TaskId) {
     for (auto i = self->m_tcp_connections.begin(); i != self->m_tcp_connections.end();) {
         auto next = std::next(i);
 
-        TcpConnection &conn = i->second;
+        const TcpConnection &conn = i->second;
         if (conn.has_unread_data() || quiche_conn_stream_readable(self->m_quic_conn.get(), conn.stream_id)) {
             self->process_pending_data(conn.stream_id);
         }
@@ -1229,10 +1223,18 @@ int Http3Upstream::mux_send_data_callback(ServerUpstream *upstream, uint64_t str
     auto *self = (Http3Upstream *) upstream;
     assert(self->m_udp_mux.get_stream_id() == stream_id || self->m_icmp_mux.get_stream_id() == stream_id);
 
-    log_upstream(self, trace, "Trying to send packet of {} bytes on {} stream", data.size(),
-            stream_id == self->m_udp_mux.get_stream_id() ? "UDP" : "ICMP");
+    // @todo: revert after investigation
+    if (stream_id != self->m_udp_mux.get_stream_id()) {
+        log_upstream(self, trace, "Trying to send packet of {} bytes on {} stream", data.size(),
+                stream_id == self->m_udp_mux.get_stream_id() ? "UDP" : "ICMP");
+    }
 
     ssize_t stream_cap = quiche_conn_stream_capacity(self->m_quic_conn.get(), stream_id);
+    // @todo: revert after investigation
+    if (stream_id == self->m_udp_mux.get_stream_id()) {
+        log_upstream(
+                self, dbg, "Trying to send packet of {} bytes on UDP stream (stream_cap={})", data.size(), stream_cap);
+    }
     if (stream_cap < 0) {
         log_upstream(self, dbg, "Failed to send packet on {} stream: quiche_conn_stream_capacity: {}",
                 stream_id == self->m_udp_mux.get_stream_id() ? "UDP" : "ICMP",
@@ -1254,12 +1256,12 @@ int Http3Upstream::mux_send_data_callback(ServerUpstream *upstream, uint64_t str
         log_upstream(self, dbg, "Failed to send packet on {} stream: quiche_h3_send_body: {}",
                 stream_id == self->m_udp_mux.get_stream_id() ? "UDP" : "ICMP",
                 magic_enum::enum_name((quiche_h3_error) r));
-        return (int) r;
+        return (r == QUICHE_ERR_DONE) ? 0 : (int) r;
     }
 
     if ((size_t) r != data.size()) {
         log_upstream(self, warn, "Incomplete packet sent: {} of {} bytes", (size_t) r, data.size());
-        assert(0);
+        return -1;
     }
 
     return 0;

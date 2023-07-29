@@ -124,18 +124,16 @@ int TunListener::read_out_pending_data(uint64_t id, Connection *conn) const {
         std::vector<uint8_t> &chunk = pending.front();
         ClientRead event = {id, chunk.data(), chunk.size(), 0};
         this->handler.func(this->handler.arg, CLIENT_EVENT_READ, &event);
-        if (conn->proto == IPPROTO_UDP) {
-            if (ssize_t(chunk.size()) != event.result) {
-                log_conn(this, id, dbg, "UDP packet wasn't sent or sent partially: length={}, result={}", chunk.size(),
-                        event.result);
-            }
-            chunk.clear();
-        } else if (event.result >= 0) {
-            chunk.erase(chunk.begin(), chunk.begin() + event.result);
-        } else {
+        if (event.result < 0) {
             return event.result;
         }
-
+        if (conn->proto == IPPROTO_UDP && ssize_t(chunk.size()) != event.result) {
+            log_conn(this, id, dbg, "UDP packet wasn't sent or sent partially: length={}, result={}", chunk.size(),
+                    event.result);
+            chunk.clear();
+        } else {
+            chunk.erase(chunk.begin(), chunk.begin() + event.result);
+        }
         if (chunk.empty()) {
             pending.pop();
         }

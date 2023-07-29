@@ -72,7 +72,7 @@ private:
     };
 
     State m_state = (State) 0;
-    std::chrono::milliseconds m_max_idle_timeout;
+    std::chrono::milliseconds m_max_idle_timeout{};
     UdpSocketPtr m_socket;
     DeclPtr<quiche_conn, &quiche_conn_free> m_quic_conn;
     DeclPtr<quiche_h3_conn, &quiche_h3_conn_free> m_h3_conn;
