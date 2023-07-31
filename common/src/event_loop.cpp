@@ -138,6 +138,9 @@ int vpn_event_loop_run(VpnEventLoop *loop) {
 
 #ifdef __MACH__
     static auto ensure_sigpipe_ignored [[maybe_unused]] = signal(SIGPIPE, SIG_IGN);
+    if (0 != pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0)) {
+        log_loop(loop, warn, "Failed to set qos class to user-initiated: %s", strerror(errno));
+    }
 
 #elif defined EVTHREAD_USE_PTHREADS_IMPLEMENTED
     // Block SIGPIPE
