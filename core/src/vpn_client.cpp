@@ -538,6 +538,7 @@ void VpnClient::finalize_disconnect() {
 
     if (this->tunnel != nullptr) {
         this->tunnel->deinit();
+        this->tunnel = nullptr;
     }
 
     this->endpoint_connector.reset();
@@ -798,6 +799,7 @@ static void vpn_client::run_disconnect(void *ctx, void *data) {
 
     if (vpn->dns_proxy_listener != nullptr) {
         vpn->dns_proxy_listener->deinit();
+        vpn->dns_proxy_listener = nullptr;
     }
 
     log_client(vpn, trace, "Done");
