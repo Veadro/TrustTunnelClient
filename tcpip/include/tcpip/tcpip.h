@@ -27,13 +27,6 @@ namespace ag {
 
 #define TCPIP_UDP_TIMEOUT_S (5 * 60) // 5 minutes
 
-#define ENABLE_STATISTICS 0
-
-#if ENABLE_STATISTICS
-#define TCPIP_STAT_NOTIFY_PERIOD_MS 100u
-#define TCPIP_STAT_NOTIFY_BYTE_THRESHOLD 100000ull
-#endif
-
 typedef struct TcpipCtx TcpipCtx;
 
 /**

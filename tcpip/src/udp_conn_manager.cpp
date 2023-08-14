@@ -5,16 +5,11 @@
 #endif
 
 #include <assert.h>
-#include <errno.h>
-#include <stdbool.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
+#include <cstdlib>
+#include <ctime>
 
 #include <event2/buffer.h>
-#include <event2/bufferevent.h>
 #include <event2/event.h>
-#include <event2/thread.h>
 #include <event2/util.h>
 #include <lwip/init.h>
 #include <lwip/ip_addr.h>
@@ -59,8 +54,6 @@ int udp_cm_send_data(UdpConnDescriptor *connection, const uint8_t *data, size_t 
         udp_cm_close_descriptor(connection->common.parent_ctx, connection->common.id);
         return -1;
     }
-
-    update_input_statistics(common, length);
 
     TcpipHandler *callbacks = &ctx->parameters.handler;
     TcpipDataSentEvent event = {connection->common.id, length};
@@ -115,7 +108,6 @@ void udp_cm_receive(TcpipCtx *ctx, const ip_addr_t *src_addr, u16_t src_port, co
     callbacks->handler(callbacks->arg, TCPIP_EVENT_READ, &event);
 
     if (event.result >= 0) {
-        update_output_statistics(&connection->common, event.result);
         tcpip_refresh_connection_timeout_with_interval(ctx, &connection->common, TCPIP_UDP_TIMEOUT_S);
     } else {
         udp_cm_close_descriptor(ctx, event.id);
@@ -206,8 +198,6 @@ void udp_cm_close_descriptor(TcpipCtx *ctx, uint64_t id) {
 
     auto *connection = (UdpConnDescriptor *) kh_value(ctx->udp.connections.by_id, i);
     log_conn(connection, trace, "Closing connection {}", (void *) connection);
-
-    notify_connection_statistics(&connection->common);
 
     TcpipHandler *callbacks = &ctx->parameters.handler;
     callbacks->handler(callbacks->arg, TCPIP_EVENT_CONNECTION_CLOSED, &connection->common.id);

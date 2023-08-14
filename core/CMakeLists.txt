@@ -38,6 +38,7 @@ set(SOURCE_FILES
         ${VPNCORE_SRC_DIR}/plain_dns_manager.cpp
         ${VPNCORE_SRC_DIR}/vpn_dns_resolver.cpp
         ${VPNCORE_SRC_DIR}/vpn_connection.cpp
+        ${VPNCORE_SRC_DIR}/connection_statistics.cpp
 )
 
 
@@ -136,6 +137,7 @@ add_unit_test(test_single_upstream_connector "${TEST_DIR}" "${TEST_EXTRA_INCLUDE
 add_unit_test(test_fallbackable_upstream_connector "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
 add_unit_test(test_vpn_dns_resolver "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
 add_unit_test(test_quic_connection_migration "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
+add_unit_test(test_connection_statistics "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
 
 if(NOT WIN32)
     add_unit_test(test_vpn_manager_fsm ${TEST_DIR} "${TEST_EXTRA_INCLUDES}" TRUE TRUE)

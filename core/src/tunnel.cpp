@@ -11,6 +11,7 @@
 #include <magic_enum.hpp>
 
 #include "common/net_utils.h"
+#include "connection_statistics.h"
 #include "fake_upstream.h"
 #include "net/dns_utils.h"
 #include "net/quic_utils.h"
@@ -117,6 +118,18 @@ static void destroy_connection(Tunnel *tunnel, uint64_t client_id, uint64_t serv
         vpn_connection_remove(tunnel->connections.by_server_id, conn->server_id);
 
         log_conn(tunnel, conn, dbg, "Destroyed (download={}, upload={})", conn->incoming_bytes, conn->outgoing_bytes);
+
+        if (conn->flags.test(CONNF_MONITOR_STATS)) {
+            tunnel->statistics_monitor->unregister_conn(conn->client_id, /*do_report*/ true);
+        }
+        if (conn->listener == tunnel->vpn->client_listener.get()) {
+            VpnTunnelConnectionClosedEvent event {
+                    .id = conn->client_id,
+            };
+            const vpn_client::Handler &handler = tunnel->vpn->parameters.handler;
+            handler.func(handler.arg, vpn_client::EVENT_CONNECTION_CLOSED, &event);
+        }
+
         assert(nullptr == vpn_connection_get_by_id(tunnel->connections.by_client_id, conn->client_id));
         assert(nullptr == vpn_connection_get_by_id(tunnel->connections.by_server_id, conn->server_id));
         delete conn;
@@ -335,6 +348,9 @@ static bool send_buffered_data(const Tunnel *self, uint64_t conn_client_id) {
         const ssize_t r = conn->upstream->send(conn->server_id, packet.data(), packet.size());
         if (r >= 0 && size_t(r) == packet.size()) {
             conn->outgoing_bytes += r;
+            if (conn->flags.test(CONNF_MONITOR_STATS)) {
+                self->statistics_monitor->update_upload(conn_client_id, r);
+            }
             continue;
         }
 
@@ -508,6 +524,9 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
             conn->upstream->update_flow_control(conn->server_id, {});
         } else if (event->result > 0) {
             conn->incoming_bytes += event->result;
+            if (conn->flags.test(CONNF_MONITOR_STATS)) {
+                this->statistics_monitor->update_download(conn->client_id, event->result);
+            }
             TcpFlowCtrlInfo info = conn->listener->flow_control_info(conn->client_id);
             log_conn(this, conn, trace, "Client side can send {} bytes", info.send_buffer_size);
             conn->upstream->update_flow_control(conn->server_id, info);
@@ -1323,6 +1342,12 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
         conn->state = CONNS_CONNECTED;
         conn->listener->turn_read(id, true);
         conn->upstream->update_flow_control(conn->server_id, conn->listener->flow_control_info(conn->client_id));
+
+        if (conn->listener == this->vpn->client_listener.get()
+                && conn->upstream == this->vpn->endpoint_upstream.get()) {
+            conn->flags.set(CONNF_MONITOR_STATS);
+            this->statistics_monitor->register_conn(id);
+        }
         break;
     }
     case CLIENT_EVENT_CONNECTION_CLOSED: {
@@ -1459,6 +1484,9 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
             event->result = (int) conn->upstream->send(conn->server_id, event->data, event->length);
             if (event->result > 0 || (size_t) event->result == event->length) {
                 conn->outgoing_bytes += event->result;
+                if (conn->flags.test(CONNF_MONITOR_STATS)) {
+                    this->statistics_monitor->update_upload(conn->client_id, event->result);
+                }
                 size_t server_can_send = conn->upstream->available_to_send(conn->server_id);
                 log_conn(this, conn, trace, "Server side can send {} bytes", server_can_send);
                 conn->listener->turn_read(conn->client_id, server_can_send > 0);
@@ -1571,6 +1599,16 @@ static void plain_dns_listener_handler(void *arg, ClientEvent what, void *data) 
     self->listener_handler(self->plain_dns_manager.get(), what, data);
 }
 
+static void raise_statistics(Tunnel *self, const ConnectionStatistics &stats) {
+    VpnTunnelConnectionStatsEvent event = {
+            .id = stats.id,
+            .upload = stats.upload,
+            .download = stats.download,
+    };
+    const vpn_client::Handler &handler = self->vpn->parameters.handler;
+    handler.func(handler.arg, vpn_client::EVENT_CONNECTION_STATS, &event);
+}
+
 bool Tunnel::init(VpnClient *vpn) {
     this->vpn = vpn;
     if (!this->icmp_manager.init({vpn->parameters.ev_loop}, {on_icmp_reply_ready, this})) {
@@ -1601,6 +1639,11 @@ bool Tunnel::init(VpnClient *vpn) {
         assert(0);
         return false;
     }
+
+    this->statistics_monitor =
+            std::make_unique<ConnectionStatisticsMonitor>(vpn->parameters.ev_loop, [this](ConnectionStatistics stats) {
+                raise_statistics(this, stats);
+            });
 
     return true;
 }
@@ -1633,6 +1676,7 @@ void Tunnel::deinit() {
         this->plain_dns_manager->deinit();
         this->plain_dns_manager.reset();
     }
+    this->statistics_monitor.reset();
 
     log_tun(this, dbg, "Done");
 }

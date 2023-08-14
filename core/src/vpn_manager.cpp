@@ -709,6 +709,12 @@ static void client_handler(void *arg, vpn_client::Event what, void *data) {
     case vpn_client::EVENT_DNS_UPSTREAM_UNAVAILABLE:
         vpn->handler.func(vpn->handler.arg, VPN_EVENT_DNS_UPSTREAM_UNAVAILABLE, data);
         break;
+    case vpn_client::EVENT_CONNECTION_STATS:
+        vpn->handler.func(vpn->handler.arg, VPN_EVENT_TUNNEL_CONNECTION_STATS, data);
+        break;
+    case vpn_client::EVENT_CONNECTION_CLOSED:
+        vpn->handler.func(vpn->handler.arg, VPN_EVENT_TUNNEL_CONNECTION_CLOSED, data);
+        break;
     }
 }
 

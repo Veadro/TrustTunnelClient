@@ -131,6 +131,8 @@ static void vpn_handler(void *, VpnEvent what, void *data) {
     case VPN_EVENT_CLIENT_OUTPUT:
     case VPN_EVENT_ENDPOINT_CONNECTION_STATS:
     case VPN_EVENT_DNS_UPSTREAM_UNAVAILABLE:
+    case VPN_EVENT_TUNNEL_CONNECTION_STATS:
+    case VPN_EVENT_TUNNEL_CONNECTION_CLOSED:
         // do nothing
         break;
     case VPN_EVENT_VERIFY_CERTIFICATE: {

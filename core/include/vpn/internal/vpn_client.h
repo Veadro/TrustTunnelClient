@@ -42,6 +42,9 @@ enum Event {
     EVENT_ERROR,           /** Raised when something went wrong (raised with `VpnError`) */
     EVENT_DNS_UPSTREAM_UNAVAILABLE, /** Raised if a health check on the configured DNS upstream is failed (raised with
                                        null) */
+    EVENT_CONNECTION_STATS,  /** Notifies of connection statistics updates (raised with `VpnTunnelConnectionStatsEvent`
+                                and  only for connections routed through a VPN endpoint) */
+    EVENT_CONNECTION_CLOSED, /** Raised when a connection is closed (raised with `VpnTunnelConnectionClosedEvent`) */
 };
 
 struct Handler {

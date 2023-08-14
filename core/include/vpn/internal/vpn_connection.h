@@ -50,6 +50,8 @@ enum VpnConnectionFlags {
     CONNF_PLAIN_DNS_CONNECTION,
     /// Connection is routed through the local DNS proxy
     CONNF_ROUTE_TO_DNS_PROXY,
+    /// Connection's statistics is being monitored
+    CONNF_MONITOR_STATS,
 };
 
 class ClientListener;
@@ -69,6 +71,10 @@ struct VpnConnection {
     uint64_t migrating_client_id = NON_ID;
     std::string app_name;
     event_loop::AutoTaskId complete_connect_request_task;
+    // This pair of counters is used to make it visible in the logs whether
+    // any traffic has passed through the connection.
+    // The statistics monitor does not replace them because it only operates
+    // on the connections that have been routed through an endpoint.
     size_t incoming_bytes = 0;
     size_t outgoing_bytes = 0;
     std::list<std::vector<uint8_t>> buffered_packets;
@@ -87,10 +93,8 @@ struct VpnConnection {
     [[nodiscard]] SockAddrTag make_tag() const;
 };
 
-struct UdpVpnConnection : public VpnConnection {
-};
+struct UdpVpnConnection : public VpnConnection {};
 
-struct TcpVpnConnection : public VpnConnection {
-};
+struct TcpVpnConnection : public VpnConnection {};
 
 } // namespace ag

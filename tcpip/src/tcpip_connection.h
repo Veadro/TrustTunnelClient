@@ -27,15 +27,6 @@ typedef struct {
     AddressPair addr;            /**< Source-destination address pair */
     TcpipCtx *parent_ctx;        /**< Parent tcpip context structure */
     struct timeval conn_timeout; /**< The moment when connection will be timed out */
-
-#if ENABLE_STATISTICS
-    uint64_t received_from_server;      /**< Number of bytes received from server */
-    uint64_t last_received_from_server; /**< Number of bytes received from server at last notification */
-    uint64_t sent_to_server;            /**< Number of bytes sent to server */
-    uint64_t last_sent_to_server;       /**< Number of bytes sent to server at last notification */
-    struct timeval next_stat_update;    /**< Timestamp of next update of statistics */
-#endif
-
 } TcpipConnection;
 
 uint64_t addr_pair_hash(const AddressPair *addr);

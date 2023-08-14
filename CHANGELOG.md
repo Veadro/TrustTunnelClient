@@ -1,5 +1,12 @@
 # CHANGELOG
 
+* [Feature] The library now notifies an application about the amount of traffic passed through
+  connections that have been routed through an endpoint.
+  For this purpose, two events were introduced in `VpnEvent`:
+  * `VPN_EVENT_TUNNEL_CONNECTION_STATS` - raised only for connections that have been routed through
+    an endpoint,
+  * `VPN_EVENT_TUNNEL_CONNECTION_CLOSED` - raised for any user connection.
+
 ## 0.92.46
 
 * [Feature] The library now accepts CIDR range in exclusion list.

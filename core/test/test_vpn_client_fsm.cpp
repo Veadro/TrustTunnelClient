@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include "connection_statistics.h"
 #include "direct_upstream.h"
 #include "plain_dns_manager.h"
 #include "socks_listener.h"

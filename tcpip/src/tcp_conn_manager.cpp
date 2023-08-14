@@ -5,15 +5,13 @@
 #endif
 
 #include <assert.h>
-#include <errno.h>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 
 #include <event2/buffer.h>
-#include <event2/bufferevent.h>
 #include <event2/event.h>
-#include <event2/thread.h>
 #include <event2/util.h>
 #include <lwip/init.h>
 #include <lwip/ip_addr.h>
@@ -100,7 +98,6 @@ void tcp_cm_sent_to_remote(TcpConnDescriptor *connection, size_t n) {
         tcp_raw_slide_window(connection->pcb, n);
     }
     tcp_refresh_connection_timeout(connection);
-    update_output_statistics(&connection->common, n);
 }
 
 static void process_rejected_connection(TcpConnDescriptor *connection) {
@@ -244,7 +241,6 @@ int tcp_cm_send_data(TcpConnDescriptor *connection, const uint8_t *data, size_t 
     }
 
     tcp_refresh_connection_timeout(connection);
-    update_input_statistics(&connection->common, bytes_to_send);
 
     return bytes_to_send;
 }
@@ -265,8 +261,6 @@ void tcp_cm_close_descriptor(TcpipCtx *ctx, uint64_t id, bool graceful) {
 
     auto *connection = (TcpConnDescriptor *) kh_value(ctx->tcp.connections.by_id, i);
     log_conn(connection, trace, "Closing connection {}", (void *) connection);
-
-    notify_connection_statistics(&connection->common);
 
     tcp_raw_close(connection->pcb, graceful);
     connection->pcb = nullptr;

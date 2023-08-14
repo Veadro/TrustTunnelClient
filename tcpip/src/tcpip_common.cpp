@@ -4,7 +4,6 @@
 #include <unistd.h>
 #endif
 
-#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <errno.h>
@@ -14,9 +13,7 @@
 
 #include <common/utils.h>
 #include <event2/buffer.h>
-#include <event2/bufferevent.h>
 #include <event2/event.h>
-#include <event2/thread.h>
 #include <event2/util.h>
 #include <lwip/netdb.h>
 #include <lwip/netif.h>
@@ -496,49 +493,6 @@ void tcpip_process_input_packets(TcpipCtx *ctx, VpnPackets *packets) {
     }
 
     tracelog(ctx->logger, "TUN: processed {} input packets", packets->size);
-}
-
-void notify_connection_statistics(TcpipConnection *connection) {
-#if ENABLE_STATISTICS
-    tcpip_ctx_t *ctx = connection->parent_ctx;
-    tcpip_callbacks_t *callbacks = &ctx->parameters.callbacks;
-
-    tcpip_stat_event_t event = {
-            connection->id,
-            connection->sent_to_server,
-            connection->received_from_server,
-    };
-    callbacks->handler(callbacks->arg, TCPIP_EVENT_STAT_NOTIFY, &event);
-
-    connection->last_sent_to_server = connection->sent_to_server;
-    connection->last_received_from_server = connection->received_from_server;
-#endif
-}
-
-void update_output_statistics(TcpipConnection *connection, const size_t bytes_number) {
-#if ENABLE_STATISTICS
-    tcpip_ctx_t *ctx = connection->parent_ctx;
-    uint16_t mtu_size = ctx->parameters.mtu_size;
-    connection->sent_to_server += bytes_number + get_approx_headers_size(bytes_number, IP_PROTO_TCP, mtu_size);
-
-    if (stat_should_be_notified(ctx->parameters.event_base, &connection->next_stat_update,
-                connection->sent_to_server - connection->last_sent_to_server)) {
-        notify_connection_statistics(connection);
-    }
-#endif
-}
-
-void update_input_statistics(TcpipConnection *connection, size_t bytes_number) {
-#if ENABLE_STATISTICS
-    tcpip_ctx_t *ctx = connection->parent_ctx;
-    uint16_t mtu_size = ctx->parameters.mtu_size;
-    connection->received_from_server += bytes_number + get_approx_headers_size(bytes_number, IP_PROTO_UDP, mtu_size);
-
-    if (stat_should_be_notified(ctx->parameters.event_base, &connection->next_stat_update,
-                connection->received_from_server - connection->last_received_from_server)) {
-        notify_connection_statistics(connection);
-    }
-#endif
 }
 
 TcpipConnection *tcpip_get_connection_by_id(const ConnectionTables *tables, uint64_t id) {

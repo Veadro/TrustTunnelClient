@@ -233,6 +233,11 @@ typedef enum {
                                             `VpnEndpointConnectionStatsEvent`) */
     VPN_EVENT_DNS_UPSTREAM_UNAVAILABLE,  /** Raised if a health check on the configured DNS upstream is failed (raised
                                             with `VpnDnsUpstreamUnavailableEvent`) */
+    VPN_EVENT_TUNNEL_CONNECTION_STATS,   /** Notifies of connection statistics updates (raised with
+                                            `VpnTunnelConnectionStatsEvent` and only for connections routed through
+                                            a VPN endpoint) */
+    VPN_EVENT_TUNNEL_CONNECTION_CLOSED,  /** Raised when a connection is closed (raised with
+                                            `VpnTunnelConnectionClosedEvent`) */
 } VpnEvent;
 
 typedef struct {
@@ -335,6 +340,16 @@ typedef struct {
 
 typedef struct {
 } VpnDnsUpstreamUnavailableEvent;
+
+typedef struct {
+    uint64_t id;       // Connection id, corresponds to the one raised in `VpnConnectRequestEvent`
+    uint64_t upload;   // Number of uploaded bytes since the last notification
+    uint64_t download; // Number of downloaded bytes since the last notification
+} VpnTunnelConnectionStatsEvent;
+
+typedef struct {
+    uint64_t id; // Connection id, corresponds to the one raised in `VpnConnectRequestEvent`
+} VpnTunnelConnectionClosedEvent;
 
 typedef struct {
     void (*func)(void *arg, VpnEvent what, void *data);

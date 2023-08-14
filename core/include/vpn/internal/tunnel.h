@@ -21,6 +21,7 @@
 namespace ag {
 
 class PlainDnsManager;
+class ConnectionStatisticsMonitor;
 
 KHASH_MAP_INIT_INT64(connections_by_id, VpnConnection *);
 
@@ -47,6 +48,7 @@ struct Tunnel {
     event_loop::AutoTaskId repeat_exclusions_resolve_task;
     std::unique_ptr<ServerUpstream> fake_upstream;
     std::unique_ptr<PlainDnsManager> plain_dns_manager;
+    std::unique_ptr<ConnectionStatisticsMonitor> statistics_monitor;
 
     Tunnel();
     ~Tunnel();

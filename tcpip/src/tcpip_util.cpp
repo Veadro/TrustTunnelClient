@@ -6,7 +6,6 @@
 
 #include <string.h>
 
-#include <event2/event.h>
 #include <event2/util.h>
 #include <lwip/ip.h>
 #include <lwip/prot/tcp.h>
@@ -74,25 +73,6 @@ void ipaddr_ntoa_r_pretty(const ip_addr_t *addr, char *buf, int buflen) {
     } else {
         inet_ntop(AF_INET6, &IP6_ADDR_ANY6->addr, buf, (ev_socklen_t) buflen);
     }
-}
-
-bool stat_should_be_notified(struct event_base *event_base, struct timeval *next_update, size_t bytes_transfered) {
-#if ENABLE_STATISTICS
-    struct timeval current_time;
-    event_base_gettimeofday_cached(event_base, &current_time);
-
-    bool is_time_threshold_reached = timercmp(&current_time, next_update, >);
-    bool is_byte_threshold_reached = TCPIP_STAT_NOTIFY_BYTE_THRESHOLD <= bytes_transfered;
-
-    if (is_byte_threshold_reached && is_time_threshold_reached) {
-        static const struct timeval notify_interval = {.tv_sec = (time_t) TCPIP_STAT_NOTIFY_PERIOD_MS / 1000,
-                .tv_usec = (suseconds_t) (TCPIP_STAT_NOTIFY_PERIOD_MS % 1000) * 1000};
-        timeradd(&current_time, &notify_interval, next_update);
-        return true;
-    }
-#endif
-
-    return false;
 }
 
 int pcap_write_header(int fd) {

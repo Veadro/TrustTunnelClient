@@ -83,12 +83,6 @@ void tcpip_refresh_connection_timeout(TcpipCtx *ctx, TcpipConnection *connection
  */
 void tcpip_process_input_packets(TcpipCtx *ctx, VpnPackets *packets);
 
-void notify_connection_statistics(TcpipConnection *connection);
-
-void update_output_statistics(TcpipConnection *connection, size_t bytes_number);
-
-void update_input_statistics(TcpipConnection *connection, size_t bytes_number);
-
 TcpipConnection *tcpip_get_connection_by_id(const ConnectionTables *tables, uint64_t id);
 
 TcpipConnection *tcpip_get_connection_by_ip(const ConnectionTables *tables, const ip_addr_t *src_addr,
