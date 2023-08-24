@@ -145,7 +145,7 @@ static void on_event(evutil_socket_t fd, short, void *arg) {
         it->fd.reset();
         it->event.reset();
         self->done.splice(self->done.end(), self->syn_sent, it);
-        log_ping(self, trace, "Connected to {} via {} in {} ms", sockaddr_to_str((sockaddr *) &it->dest),
+        log_ping(self, trace, "Connected to {}{} via {} in {} ms", self->use_quic ? "udp://" : "tcp://", sockaddr_to_str((sockaddr *) &it->dest),
                 it->bound_if_name, dt_ms);
 
         if (!std::exchange(self->have_round_winner, true)) {

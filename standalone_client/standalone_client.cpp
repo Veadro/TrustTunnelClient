@@ -430,7 +430,10 @@ static int listener_runner() {
         return 1;
     }
 #ifdef __APPLE__
-    auto dns_manager = VpnMacDnsSettingsManager::create(AG_UNFILTERED_DNS_IPS_V4[0]);
+    std::unique_ptr<VpnMacDnsSettingsManager> dns_manager;
+    if (std::holds_alternative<Config::TunListener>(g_config.listener)) {
+        dns_manager = VpnMacDnsSettingsManager::create(AG_UNFILTERED_DNS_IPS_V4[0]);
+    }
 #endif // __APPLE__
 #endif
 

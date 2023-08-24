@@ -35,6 +35,9 @@ static Logger g_logger{"TCP_SOCKET"};
 static const size_t MAX_WRITE_BUFFER_LEN = 128 * 1024;
 static const size_t MAX_READ_SIZE = 128 * 1024;
 
+static constexpr auto DPI_COOLDOWN_TIME = Millis{25};
+static constexpr size_t DPI_SPLIT_SIZE = 3; // Chosen by dice roll
+
 static std::atomic_int g_next_id = 0; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 typedef enum {
@@ -410,6 +413,33 @@ fail:
     return nullptr;
 }
 
+static std::unique_ptr<ev_token_bucket_cfg, ag::Ftor<&ev_token_bucket_cfg_free>> RATE_LIMIT_ANTIDPI{
+        ev_token_bucket_cfg_new(
+                EV_RATE_LIMIT_MAX, EV_RATE_LIMIT_MAX,
+                DPI_SPLIT_SIZE, DPI_SPLIT_SIZE,
+                std::array<timeval, 1>{ms_to_timeval(DPI_COOLDOWN_TIME.count())}.data())
+};
+
+static std::unique_ptr<ev_token_bucket_cfg, ag::Ftor<&ev_token_bucket_cfg_free>> RATE_LIMIT_UNLIMITED{
+        ev_token_bucket_cfg_new(
+                EV_RATE_LIMIT_MAX, EV_RATE_LIMIT_MAX,
+                EV_RATE_LIMIT_MAX, EV_RATE_LIMIT_MAX,
+                std::array<timeval, 1>{ms_to_timeval(DPI_COOLDOWN_TIME.count())}.data())
+};
+
+static void on_rate_limited_write(struct evbuffer *, const struct evbuffer_cb_info *info, void *arg) {
+    if (info->n_deleted > 0) {
+        auto bev = (bufferevent *) arg;
+        // If rate limiter is nullptr, buckets are immediately flushed.
+        // To keep next bucket, set unlimited rate limiter, not nullptr
+        bufferevent_set_rate_limit(bev, RATE_LIMIT_UNLIMITED.get());
+        if (info->orig_size == info->n_deleted) {
+            bufferevent_set_rate_limit(bev, nullptr);
+            evbuffer_remove_cb(bufferevent_get_output(bev), on_rate_limited_write, (void *) bev);
+        }
+    }
+}
+
 static struct bufferevent *create_bufferevent(TcpSocket *sock, const struct sockaddr *dst, SSL *ssl) {
     struct bufferevent *bev = nullptr;
     SocketProtectEvent event;
@@ -448,15 +478,21 @@ static struct bufferevent *create_bufferevent(TcpSocket *sock, const struct sock
 
     base = vpn_event_loop_get_base(sock->parameters.ev_loop);
     options = BEV_OPT_DEFER_CALLBACKS | BEV_OPT_CLOSE_ON_FREE;
-    if (ssl == nullptr) {
-        bev = bufferevent_socket_new(base, fd, options);
-    } else {
-        bev = bufferevent_openssl_socket_new(base, fd, ssl, BUFFEREVENT_SSL_CONNECTING, options);
-    }
-
+    bev = bufferevent_socket_new(base, fd, options);
     if (bev == nullptr) {
         log_sock(sock, err, "Failed to create bufferevent");
         goto fail;
+    }
+
+    if (ssl != nullptr) {
+        bufferevent_set_rate_limit(bev, RATE_LIMIT_ANTIDPI.get());
+        evbuffer_add_cb(bufferevent_get_output(bev), on_rate_limited_write, (void *) bev);
+        bufferevent *ssl_bev = bufferevent_openssl_filter_new(base, bev, ssl, BUFFEREVENT_SSL_CONNECTING, options);
+        if (ssl_bev == nullptr) {
+            log_sock(sock, err, "Failed to create SSL bufferevent");
+            goto fail;
+        }
+        bev = ssl_bev;
     }
 
     tv = ms_to_timeval(uint32_t(sock->parameters.timeout.count()));
