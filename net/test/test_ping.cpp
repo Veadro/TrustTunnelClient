@@ -60,23 +60,23 @@ public:
 };
 
 TEST_F(PingTest, Single) {
-    static const std::pair<std::string, PingStatus> TEST_DATA[] = {
+    static const std::pair<const char *, PingStatus> TEST_DATA[] = {
             {"1.1.1.1:443", PING_OK},
             {"[::1]:12", PING_SOCKET_ERROR},
             {"1.2.3.4:80", PING_TIMEDOUT},
             {"127.0.0.1:12", PING_SOCKET_ERROR},
     };
 
-    std::vector<sockaddr_storage> addresses;
+    std::vector<VpnEndpoint> addresses;
     for (const auto &i : TEST_DATA) {
-        addresses.push_back(sockaddr_from_str(i.first.c_str()));
+        addresses.push_back(VpnEndpoint{.address = sockaddr_from_str(i.first), .name = i.first});
     }
 
     TestCtx test_ctx = generate_test_ctx();
     PingInfo info = {
             .loop = test_ctx.loop,
-            .addrs = {addresses.data(), addresses.size()},
-            .timeout_ms = 500,
+            .endpoints = {addresses.data(), addresses.size()},
+            .timeout_ms = 5000,
             .nrounds = 1,
     };
     test_ctx.ping.reset(ping_start(&info,
@@ -90,7 +90,7 @@ TEST_F(PingTest, Single) {
                             return;
                         }
 
-                        test_ctx->results[sockaddr_to_str(result->addr)] = *result;
+                        test_ctx->results[sockaddr_to_str((sockaddr *) &result->endpoint->address)] = *result;
                     },
                     &test_ctx,
             }));
@@ -118,7 +118,7 @@ TEST_F(PingTest, Single) {
 }
 
 TEST_F(PingTest, Timeout) {
-    static const std::string TEST_DATA[] = {
+    static const char *const TEST_DATA[] = {
             "94.140.14.200:443",
             "1.2.3.4:443",
 #ifndef IPV6_UNAVAILABLE
@@ -129,14 +129,14 @@ TEST_F(PingTest, Timeout) {
 
     TestCtx test_ctx = generate_test_ctx();
 
-    std::vector<sockaddr_storage> addresses;
+    std::vector<VpnEndpoint> addresses;
     for (const auto &i : TEST_DATA) {
-        addresses.push_back(sockaddr_from_str(i.c_str()));
+        addresses.push_back(VpnEndpoint{.address = sockaddr_from_str(i), .name = i});
     }
 
     PingInfo info = {
             .loop = test_ctx.loop,
-            .addrs = {addresses.data(), addresses.size()},
+            .endpoints = {addresses.data(), addresses.size()},
             .timeout_ms = 500,
             .nrounds = 1,
     };
@@ -151,7 +151,7 @@ TEST_F(PingTest, Timeout) {
                             return;
                         }
 
-                        test_ctx->results[sockaddr_to_str(result->addr)] = *result;
+                        test_ctx->results[sockaddr_to_str((sockaddr *) &result->endpoint->address)] = *result;
                     },
                     &test_ctx,
             }));
@@ -170,7 +170,7 @@ TEST_F(PingTest, Timeout) {
 }
 
 TEST_F(PingTest, Multiple) {
-    static const std::pair<std::string, PingStatus> TEST_DATA[] = {
+    static const std::pair<const char *, PingStatus> TEST_DATA[] = {
             {"1.1.1.1:443", PING_OK},
             {"1.2.3.4:80", PING_TIMEDOUT},
 #ifndef _WIN32
@@ -182,12 +182,12 @@ TEST_F(PingTest, Multiple) {
 
     std::vector<TestCtx> contexts;
     for (const auto &i : TEST_DATA) {
-        sockaddr_storage addr = sockaddr_from_str(i.first.c_str());
+        VpnEndpoint addr{.address = sockaddr_from_str(i.first), .name = i.first};
         TestCtx &test_ctx = contexts.emplace_back(generate_test_ctx());
         PingInfo info = {
                 .loop = test_ctx.loop,
-                .addrs = {&addr, 1},
-                .timeout_ms = 500, /* windows will refuse connection to ::1 after 2 s*/
+                .endpoints = {&addr, 1},
+                .timeout_ms = 1500, /* windows will refuse connection to ::1 after 2 s*/
                 .nrounds = 1,
         };
         test_ctx.ping.reset(ping_start(&info,
@@ -212,7 +212,7 @@ TEST_F(PingTest, Multiple) {
                                 return;
                             }
 
-                            test_ctx->results[sockaddr_to_str(result->addr)] = *result;
+                            test_ctx->results[sockaddr_to_str((sockaddr *) &result->endpoint->address)] = *result;
                         },
                         &contexts,
                 }));
@@ -234,20 +234,20 @@ TEST_F(PingTest, Multiple) {
 }
 
 TEST_F(PingTest, AllAddressesInvalid) {
-    static const std::pair<std::string, PingStatus> TEST_DATA[] = {
+    static const std::pair<const char *, PingStatus> TEST_DATA[] = {
             {"0.0.0.0:12", PING_SOCKET_ERROR},
             {"[::]:12", PING_SOCKET_ERROR},
     };
 
-    std::vector<sockaddr_storage> addresses;
+    std::vector<VpnEndpoint> addresses;
     for (const auto &i : TEST_DATA) {
-        addresses.push_back(sockaddr_from_str(i.first.c_str()));
+        addresses.push_back(VpnEndpoint{.address = sockaddr_from_str(i.first), .name = i.first});
     }
 
     TestCtx test_ctx = generate_test_ctx();
     PingInfo info = {
             .loop = test_ctx.loop,
-            .addrs = {addresses.data(), addresses.size()},
+            .endpoints = {addresses.data(), addresses.size()},
             .timeout_ms = 500,
             .nrounds = 1,
     };
@@ -262,7 +262,7 @@ TEST_F(PingTest, AllAddressesInvalid) {
                             return;
                         }
 
-                        test_ctx->results[sockaddr_to_str(result->addr)] = *result;
+                        test_ctx->results[sockaddr_to_str((sockaddr *) &result->endpoint->address)] = *result;
                     },
                     &test_ctx,
             }));
@@ -278,22 +278,22 @@ TEST_F(PingTest, AllAddressesInvalid) {
 }
 
 TEST_F(PingTest, DestroyInProgressPingAfterCallback) {
-    static const std::pair<std::string, PingStatus> TEST_DATA[] = {
+    static const std::pair<const char *, PingStatus> TEST_DATA[] = {
             {"1.1.1.1:443", PING_OK},
             {"[::1]:12", PING_SOCKET_ERROR},
             {"1.2.3.4:80", PING_TIMEDOUT},
             {"127.0.0.7:12", PING_SOCKET_ERROR},
     };
 
-    std::vector<sockaddr_storage> addresses;
+    std::vector<VpnEndpoint> addresses;
     for (const auto &i : TEST_DATA) {
-        addresses.push_back(sockaddr_from_str(i.first.c_str()));
+        addresses.push_back(VpnEndpoint{.address = sockaddr_from_str(i.first), .name = i.first});
     }
 
     TestCtx test_ctx = generate_test_ctx();
     PingInfo info = {
             .loop = test_ctx.loop,
-            .addrs = {addresses.data(), addresses.size()},
+            .endpoints = {addresses.data(), addresses.size()},
             .timeout_ms = 500,
             .nrounds = 1,
     };
@@ -323,7 +323,7 @@ TEST_F(PingTest, DestroyInProgressPingAfterCallback) {
                             return;
                         }
 
-                        test_ctx->results[sockaddr_to_str(result->addr)] = *result;
+                        test_ctx->results[sockaddr_to_str((sockaddr *) &result->endpoint->address)] = *result;
                     },
                     &test_ctx,
             }));
@@ -336,21 +336,21 @@ TEST_F(PingTest, DestroyInProgressPingAfterCallback) {
 }
 
 TEST_F(PingTest, DestroyInProgressPing) {
-    static const std::pair<std::string, PingStatus> TEST_DATA[] = {
+    static const std::pair<const char *, PingStatus> TEST_DATA[] = {
             {"[::1]:12", PING_SOCKET_ERROR},
             {"127.0.0.7:12", PING_SOCKET_ERROR},
             {"1.2.3.4:80", PING_TIMEDOUT},
     };
 
-    std::vector<sockaddr_storage> addresses;
+    std::vector<VpnEndpoint> addresses;
     for (const auto &i : TEST_DATA) {
-        addresses.push_back(sockaddr_from_str(i.first.c_str()));
+        addresses.push_back(VpnEndpoint{.address = sockaddr_from_str(i.first), .name = i.first});
     }
 
     TestCtx test_ctx = generate_test_ctx();
     PingInfo info = {
             .loop = test_ctx.loop,
-            .addrs = {addresses.data(), addresses.size()},
+            .endpoints = {addresses.data(), addresses.size()},
             .timeout_ms = 500,
             .nrounds = 1,
     };
@@ -381,7 +381,7 @@ TEST_F(PingTest, DestroyInProgressPing) {
                             test_ctx->finished = true;
                         }
 
-                        test_ctx->results[sockaddr_to_str(result->addr)] = *result;
+                        test_ctx->results[sockaddr_to_str((sockaddr *) &result->endpoint->address)] = *result;
                     },
                     &test_ctx,
             }));
@@ -394,7 +394,7 @@ TEST_F(PingTest, DestroyInProgressPing) {
 }
 
 TEST_F(PingTest, MultipleRounds) {
-    static const std::pair<std::string, PingStatus> TEST_DATA[] = {
+    static const std::pair<const char *, PingStatus> TEST_DATA[] = {
             {"1.1.1.1:443", PING_OK},
             {"[::1]:12", PING_SOCKET_ERROR},
             {"1.2.3.4:80", PING_TIMEDOUT},
@@ -402,15 +402,15 @@ TEST_F(PingTest, MultipleRounds) {
     };
     static const int ROUNDS = 3;
 
-    std::vector<sockaddr_storage> addresses;
+    std::vector<VpnEndpoint> addresses;
     for (const auto &i : TEST_DATA) {
-        addresses.push_back(sockaddr_from_str(i.first.c_str()));
+        addresses.push_back(VpnEndpoint{.address = sockaddr_from_str(i.first), .name = i.first});
     }
 
     TestCtxRounds test_ctx = generate_test_ctx_rounds();
     PingInfo info = {
             .loop = test_ctx.loop,
-            .addrs = {addresses.data(), addresses.size()},
+            .endpoints = {addresses.data(), addresses.size()},
             .timeout_ms = 5000,
             .nrounds = ROUNDS,
     };
@@ -425,7 +425,7 @@ TEST_F(PingTest, MultipleRounds) {
                             return;
                         }
 
-                        test_ctx->results[sockaddr_to_str(result->addr)].emplace_back(*result);
+                        test_ctx->results[sockaddr_to_str((sockaddr *) &result->endpoint->address)].emplace_back(*result);
                     },
                     &test_ctx,
             }));
@@ -459,20 +459,20 @@ TEST_F(PingTest, MultipleRounds) {
 #ifdef __MACH__
 // Need a machine with more than one usable interface (loopback and tunnels are excluded on purpose)
 TEST_F(PingTest, DISABLED_QueryAllInterfaces) {
-    static const std::pair<std::string, PingStatus> TEST_DATA[] = {
+    static const std::pair<const char *, PingStatus> TEST_DATA[] = {
             {"1.1.1.1:443", PING_OK},
     };
 
-    std::vector<sockaddr_storage> addresses;
+    std::vector<VpnEndpoint> addresses;
     for (const auto &i : TEST_DATA) {
-        addresses.push_back(sockaddr_from_str(i.first.c_str()));
+        addresses.push_back(VpnEndpoint{.address = sockaddr_from_str(i.first), .name = i.first});
     }
 
     TestCtxRounds test_ctx = generate_test_ctx_rounds();
     std::vector<uint32_t> interfaces = collect_operable_network_interfaces();
     PingInfo info = {
             .loop = test_ctx.loop,
-            .addrs = {addresses.data(), addresses.size()},
+            .endpoints = {addresses.data(), addresses.size()},
             .timeout_ms = 500,
             .interfaces_to_query = {interfaces.data(), interfaces.size()},
             .nrounds = 1,
@@ -488,7 +488,7 @@ TEST_F(PingTest, DISABLED_QueryAllInterfaces) {
                             return;
                         }
 
-                        test_ctx->results[sockaddr_to_str(result->addr)].emplace_back(*result);
+                        test_ctx->results[sockaddr_to_str((sockaddr *) &result->endpoint->address)].emplace_back(*result);
                     },
                     &test_ctx,
             }));

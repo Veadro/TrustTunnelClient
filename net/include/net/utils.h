@@ -145,6 +145,9 @@ constexpr std::string_view AG_UNFILTERED_DNS_IPS_V6[] = {
         "2a10:50c0::2:ff",
 };
 
+constexpr auto DPI_COOLDOWN_TIME = Millis{25}; // Time after the first part is sent
+constexpr size_t DPI_SPLIT_SIZE = 3; // Chosen by dice roll
+
 /**
  * Serializes HTTP headers structure to valid HTTP/1.1 message (request or response)
  * @param headers Pointer to HTTP headers structure

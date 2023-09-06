@@ -174,7 +174,7 @@ protected:
 
         if (expected_endpoint != nullptr) {
             ASSERT_TRUE(vpn->selected_endpoint.has_value());
-            ASSERT_NO_FATAL_FAILURE(check_endpoint(expected_endpoint, vpn->selected_endpoint->get()));
+            ASSERT_NO_FATAL_FAILURE(check_endpoint(expected_endpoint, vpn->selected_endpoint->endpoint.get()));
             ASSERT_NO_FATAL_FAILURE(
                     check_endpoint(expected_endpoint, this->vpn->client.upstream_config.endpoint.get()));
         }
@@ -187,7 +187,7 @@ protected:
 
         if (expected_endpoint != nullptr) {
             ASSERT_TRUE(vpn->selected_endpoint.has_value());
-            ASSERT_NO_FATAL_FAILURE(check_endpoint(expected_endpoint, vpn->selected_endpoint->get()));
+            ASSERT_NO_FATAL_FAILURE(check_endpoint(expected_endpoint, vpn->selected_endpoint->endpoint.get()));
             ASSERT_NO_FATAL_FAILURE(
                     check_endpoint(expected_endpoint, this->vpn->client.upstream_config.endpoint.get()));
         }
@@ -335,7 +335,7 @@ protected:
 // Check that after disconnect the client tries to connect to the same endpoint
 // if recovery took less than location update period
 TEST_F(ConnectedVpnManagerTest, RecoverySameEndpoint) {
-    AutoVpnEndpoint selected_endpoint = vpn_endpoint_clone(vpn->selected_endpoint->get());
+    AutoVpnEndpoint selected_endpoint = vpn_endpoint_clone(vpn->selected_endpoint->endpoint.get());
 
     raise_client_event(vpn_client::EVENT_DISCONNECTED);
 
@@ -362,7 +362,7 @@ TEST_F(ConnectedVpnManagerTest, RecoveryRePingLocation) {
     bool recovery_reset = false;
     do {
         ASSERT_TRUE(vpn->selected_endpoint.has_value());
-        AutoVpnEndpoint selected_endpoint = vpn_endpoint_clone(vpn->selected_endpoint->get());
+        AutoVpnEndpoint selected_endpoint = vpn_endpoint_clone(vpn->selected_endpoint->endpoint.get());
         ASSERT_TRUE(wait_state(VPN_SS_WAITING_RECOVERY));
 
         recovery_reset = vpn->recovery.start_ts == time_point<steady_clock>{};
@@ -372,7 +372,7 @@ TEST_F(ConnectedVpnManagerTest, RecoveryRePingLocation) {
         if (!recovery_reset) {
             ASSERT_NO_FATAL_FAILURE(connect_client_fail(VPN_EC_ERROR, selected_endpoint.get()));
         } else {
-            ASSERT_FALSE(vpn->selected_endpoint.has_value()) << AG_FMT("{}", *vpn->selected_endpoint.value());
+            ASSERT_FALSE(vpn->selected_endpoint.has_value()) << AG_FMT("{}", *vpn->selected_endpoint->endpoint);
             ASSERT_NO_FATAL_FAILURE(
                     ping_location(LocationsPingerResultExtra{{vpn->upstream_config->location.id, 10, &endpoints[1]}}));
             ASSERT_NO_FATAL_FAILURE(connect_client_ok(&endpoints[1]));
@@ -435,7 +435,7 @@ protected:
 
 // Check abandoning the currently connected endpoint leads to recovery in case some other endpoints are left
 TEST_F(AbandonEndpoint, CurrentlyConnectedEndpoint) {
-    AutoVpnEndpoint abandoned = vpn_endpoint_clone(vpn->selected_endpoint->get());
+    AutoVpnEndpoint abandoned = vpn_endpoint_clone(vpn->selected_endpoint->endpoint.get());
     vpn_abandon_endpoint(vpn, abandoned.get());
     ASSERT_TRUE(wait_state(VPN_SS_WAITING_RECOVERY));
     ASSERT_TRUE(std::none_of(vpn->upstream_config->location.endpoints.data,
@@ -447,9 +447,9 @@ TEST_F(AbandonEndpoint, CurrentlyConnectedEndpoint) {
 
 // Check abandoning an endpoint except the currently connected does not lead to recovery
 TEST_F(AbandonEndpoint, NotCurrentlyConnectedEndpoint) {
-    AutoVpnEndpoint abandoned = vpn_endpoint_clone([=]() -> const VpnEndpoint * {
+    AutoVpnEndpoint abandoned = vpn_endpoint_clone([=,this]() -> const VpnEndpoint * {
         for (const VpnEndpoint &e : endpoints) {
-            if (!vpn_endpoint_equals(vpn->selected_endpoint->get(), &e)) {
+            if (!vpn_endpoint_equals(vpn->selected_endpoint->endpoint.get(), &e)) {
                 return &e;
             }
         }
@@ -467,12 +467,12 @@ TEST_F(AbandonEndpoint, NotCurrentlyConnectedEndpoint) {
 
 // Check abandoning all endpoints of the same family
 TEST_F(AbandonEndpoint, AllOfFamily) {
-    int family = vpn->selected_endpoint.value()->address.ss_family;
+    int family = vpn->selected_endpoint->endpoint->address.ss_family;
     std::vector<AutoVpnEndpoint> endpoints_to_abandon = [&]() {
         std::vector<AutoVpnEndpoint> out;
-        out.emplace_back(vpn_endpoint_clone(vpn->selected_endpoint->get()));
+        out.emplace_back(vpn_endpoint_clone(vpn->selected_endpoint->endpoint.get()));
         for (const VpnEndpoint &e : endpoints) {
-            if (e.address.ss_family == family && !vpn_endpoint_equals(vpn->selected_endpoint->get(), &e)) {
+            if (e.address.ss_family == family && !vpn_endpoint_equals(vpn->selected_endpoint->endpoint.get(), &e)) {
                 out.emplace_back(vpn_endpoint_clone(&e));
             }
         }
@@ -484,7 +484,7 @@ TEST_F(AbandonEndpoint, AllOfFamily) {
         if (i < endpoints_to_abandon.size() - 1) {
             ASSERT_TRUE(wait_state(VPN_SS_WAITING_RECOVERY));
             ASSERT_TRUE(wait_state(VPN_SS_RECOVERING));
-            ASSERT_FALSE(vpn->selected_endpoint.has_value()) << AG_FMT("{}", *vpn->selected_endpoint.value());
+            ASSERT_FALSE(vpn->selected_endpoint.has_value()) << AG_FMT("{}", *vpn->selected_endpoint->endpoint);
             ASSERT_NO_FATAL_FAILURE(ping_location(LocationsPingerResultExtra{
                     {vpn->upstream_config->location.id, 10, endpoints_to_abandon[i + 1].get()}}));
             ASSERT_NO_FATAL_FAILURE(connect_client_ok(endpoints_to_abandon[i + 1].get()));

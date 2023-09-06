@@ -35,9 +35,6 @@ static Logger g_logger{"TCP_SOCKET"};
 static const size_t MAX_WRITE_BUFFER_LEN = 128 * 1024;
 static const size_t MAX_READ_SIZE = 128 * 1024;
 
-static constexpr auto DPI_COOLDOWN_TIME = Millis{25};
-static constexpr size_t DPI_SPLIT_SIZE = 3; // Chosen by dice roll
-
 static std::atomic_int g_next_id = 0; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 typedef enum {
@@ -417,14 +414,14 @@ fail:
     return nullptr;
 }
 
-static std::unique_ptr<ev_token_bucket_cfg, ag::Ftor<&ev_token_bucket_cfg_free>> RATE_LIMIT_ANTIDPI{
+static const std::unique_ptr<ev_token_bucket_cfg, ag::Ftor<&ev_token_bucket_cfg_free>> RATE_LIMIT_ANTIDPI{
         ev_token_bucket_cfg_new(
                 EV_RATE_LIMIT_MAX, EV_RATE_LIMIT_MAX,
                 DPI_SPLIT_SIZE, DPI_SPLIT_SIZE,
                 std::array<timeval, 1>{ms_to_timeval(DPI_COOLDOWN_TIME.count())}.data())
 };
 
-static std::unique_ptr<ev_token_bucket_cfg, ag::Ftor<&ev_token_bucket_cfg_free>> RATE_LIMIT_UNLIMITED{
+static const std::unique_ptr<ev_token_bucket_cfg, ag::Ftor<&ev_token_bucket_cfg_free>> RATE_LIMIT_UNLIMITED{
         ev_token_bucket_cfg_new(
                 EV_RATE_LIMIT_MAX, EV_RATE_LIMIT_MAX,
                 EV_RATE_LIMIT_MAX, EV_RATE_LIMIT_MAX,

@@ -1,5 +1,16 @@
 # CHANGELOG
 
+* [Feature] Support connecting to endpoints through a set of SNI proxies.
+    * `VpnUpstreamConfig::relay_addresses` can now be specified when connecting to a location.
+      The client shall try using one of the relay addresses to connect to an endpoint if it's unavailable
+      on its normal address. The client shall automatically disqualify relay addresses that don't work.
+    * `LocationsPinger::relay_address` can now be specified when pinging a location. The pinger shall try
+      to use it if an endpoint is unavailable on its normal address. `PingResult::through_relay` will be
+      non-zero if the relay is used. The application should try pinging with a different relay address if
+      there are pinging errors through the relay.
+    * `LocationsPinger` will now send ClientHello/QUIC Initial to "ping" the endpoints.
+    * `LocationsPinger::anti_dpi` can now be specified to enable or disable anti-DPI measures during pinging.
+
 ## 0.92.74
 
 * [Feature] The library now notifies an application about the amount of traffic passed through

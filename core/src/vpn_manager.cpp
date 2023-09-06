@@ -47,6 +47,11 @@ Vpn::~Vpn() = default;
 void Vpn::update_upstream_config(AutoPod<VpnUpstreamConfig, vpn_upstream_config_destroy> config) {
     this->upstream_config = std::move(config);
 
+    this->relay_addresses_disqualified.assign(this->upstream_config->relay_addresses.data,
+            this->upstream_config->relay_addresses.data + this->upstream_config->relay_addresses.size);
+    this->relay_addresses.clear();
+    this->relay_addresses.reserve(this->relay_addresses_disqualified.size());
+
     if (!this->upstream_config->fallback.enabled && this->upstream_config->protocol.type == VPN_UP_HTTP3) {
         log_vpn(this, info, "Forcibly setting HTTP/2 as fallback protocol");
         this->upstream_config->fallback.enabled = true;
@@ -85,17 +90,20 @@ vpn_client::Parameters Vpn::make_client_parameters() const {
 }
 
 vpn_client::EndpointConnectionConfig Vpn::make_client_upstream_config() const {
+    AutoVpnEndpoint endpoint = vpn_endpoint_clone(this->selected_endpoint.value().endpoint.get()); // NOLINT(bugprone-unchecked-optional-access)
+    if (this->selected_endpoint->relay_address.has_value()) {
+        endpoint->address = *this->selected_endpoint->relay_address;
+    }
     return {
             .main_protocol = this->upstream_config->protocol,
             .fallback = this->upstream_config->fallback,
-            .endpoint = vpn_endpoint_clone(
-                    this->selected_endpoint.value().get()), // NOLINT(bugprone-unchecked-optional-access)
+            .endpoint = std::move(endpoint),
             .timeout = milliseconds(this->upstream_config->timeout_ms),
             .username = this->upstream_config->username,
             .password = this->upstream_config->password,
             .endpoint_pinging_period = milliseconds(this->upstream_config->endpoint_pinging_period_ms),
             .ip_availability =
-                    [&] {
+                    [this] {
                         const VpnEndpoints &endpoints = this->upstream_config->location.endpoints;
                         // IPv4 is considered always available on an endpoint
                         IpVersionSet ret = IpVersionSet{}.set(IPV4);
@@ -752,7 +760,7 @@ void vpn_abandon_endpoint(Vpn *vpn, const VpnEndpoint *endpoint) {
 
     vpn->submit([vpn, endpoint = std::make_shared<AutoVpnEndpoint>(vpn_endpoint_clone(endpoint))]() mutable {
         bool is_selected_endpoint = vpn->selected_endpoint.has_value()
-                && vpn_endpoint_equals(vpn->selected_endpoint->get(), endpoint->get());
+                && vpn_endpoint_equals(vpn->selected_endpoint->endpoint.get(), endpoint->get());
         if (is_selected_endpoint) {
             vpn->selected_endpoint.reset();
         }

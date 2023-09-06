@@ -20,7 +20,7 @@ struct LocationsPinger;
 
 typedef struct {
     uint32_t timeout_ms;                // ping operation timeout (if 0, `DEFAULT_PING_TIMEOUT_MS` will be assigned)
-    AG_ARRAY_OF(VpnLocation) locations; // list of locations to ping
+    AG_ARRAY_OF(const VpnLocation) locations; // list of locations to ping
     // maximum number of times each endpoint in each location is pinged (if <= 0, `DEFAULT_PING_ROUNDS` is used)
     uint32_t rounds;
 #ifdef __MACH__
@@ -28,12 +28,16 @@ typedef struct {
     bool query_all_interfaces;
 #endif /* __MACH__ */
     bool use_quic; // use QUIC version negotiation instead of a TCP handshake
+    bool anti_dpi; // enable anti-DPI measures
+    const sockaddr *relay_address; // a relay address to use when a connection to an endpoint's address fails
 } LocationsPingerInfo;
 
 typedef struct {
     const char *id; // location id
     int ping_ms;    // selected endpoint's ping (negative if none of the location endpoints successfully pinged)
     const VpnEndpoint *endpoint; // selected endpoint
+    int through_relay;           // non-zero if the relay address specified in `LocationsPingerInfo`
+                                 // was used to ping the selected endpoint
 } LocationsPingerResult;
 
 struct LocationsPingerResultExtra : public LocationsPingerResult {

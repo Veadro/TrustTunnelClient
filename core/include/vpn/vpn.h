@@ -215,6 +215,15 @@ typedef struct {
     VpnUpstreamFallbackConfig fallback;
     /** Enable anti-dpi measures */
     bool anti_dpi;
+    /**
+     * Relay IP addresses for the location.
+     * When an endpoint fails to respond to a ping, the library will try pinging it
+     * substituting the endpoint's IP address with the first relay address. If that fails,
+     * the next relay address will be tried, an so on. If an endpoint is pinged successfully
+     * using one of the relay addresses, that relay address will be used to connect to it
+     * instead of its normal address.
+     */
+    AG_ARRAY_OF(const sockaddr_storage) relay_addresses;
 } VpnUpstreamConfig;
 
 /**

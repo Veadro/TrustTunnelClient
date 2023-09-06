@@ -18,9 +18,10 @@
 
 namespace ag {
 
-struct PingedAddress {
+struct PingedEndpoint {
+    AutoVpnEndpoint endpoint;
     int ping_ms = 0;
-    sockaddr_storage addr = {};
+    bool through_relay = false;
 };
 
 struct LocationsCtx {
@@ -37,8 +38,8 @@ struct LocationsCtx {
     ~LocationsCtx() = default;
 
     AutoVpnLocation info;
-    std::vector<PingedAddress> pinged_ipv6;
-    std::vector<PingedAddress> pinged_ipv4;
+    std::vector<PingedEndpoint> pinged_ipv6;
+    std::vector<PingedEndpoint> pinged_ipv4;
     size_t ipv4_unavailable_errors_cnt = 0;
     size_t ipv6_unavailable_errors_cnt = 0;
 };
@@ -55,6 +56,8 @@ struct LocationsPinger {
     uint32_t timeout_ms;
     uint32_t rounds;
     bool use_quic;
+    bool anti_dpi;
+    sockaddr_storage relay_address;
 };
 
 struct FinalizeLocationInfo {
@@ -76,13 +79,13 @@ static size_t get_smallest_ping_priority(const LocationsCtx *, const sockaddr *,
     return -(ping_ms + 1);
 }
 
-static const PingedAddress *select_endpoint_from_list(
-        const LocationsCtx *location, const std::vector<PingedAddress> &addresses, PingerSort priority_func) {
-    const PingedAddress *selected = nullptr;
+static const PingedEndpoint *select_endpoint_from_list(
+        const LocationsCtx *location, const std::vector<PingedEndpoint> &addresses, PingerSort priority_func) {
+    const PingedEndpoint *selected = nullptr;
     size_t selected_priority = 0;
 
-    for (const PingedAddress &i : addresses) {
-        size_t i_priority = priority_func(location, (sockaddr *) &i.addr, i.ping_ms);
+    for (const PingedEndpoint &i : addresses) {
+        size_t i_priority = priority_func(location, (sockaddr *) &i.endpoint->address, i.ping_ms);
         if (selected == nullptr || selected_priority < i_priority) {
             selected = &i;
             selected_priority = i_priority;
@@ -92,8 +95,8 @@ static const PingedAddress *select_endpoint_from_list(
     return selected;
 }
 
-static const PingedAddress *select_endpoint(const LocationsCtx *location, PingerSort sorter) {
-    const PingedAddress *selected = select_endpoint_from_list(location, location->pinged_ipv6, sorter);
+static const PingedEndpoint *select_endpoint(const LocationsCtx *location, PingerSort sorter) {
+    const PingedEndpoint *selected = select_endpoint_from_list(location, location->pinged_ipv6, sorter);
     if (selected == nullptr) {
         selected = select_endpoint_from_list(location, location->pinged_ipv4, sorter);
     }
@@ -110,7 +113,7 @@ static constexpr size_t count_of_ip_version(const VpnEndpoints &endpoints, IpVer
 
 static void finalize_location(LocationsPinger *pinger, const FinalizeLocationInfo &info) {
     const LocationsCtx *location = &info.location_ctx;
-    const PingedAddress *selected =
+    const PingedEndpoint *selected =
             select_endpoint(location, pinger->query_all_interfaces ? &get_smallest_ping_priority : &get_addr_priority);
 
     LocationsPingerResultExtra result = {
@@ -129,15 +132,20 @@ static void finalize_location(LocationsPinger *pinger, const FinalizeLocationInf
         result.ping_ms = selected->ping_ms;
         for (size_t i = 0; i < location->info->endpoints.size; ++i) {
             VpnEndpoint *ep = &location->info->endpoints.data[i];
-            if (sockaddr_equals((sockaddr *) &ep->address, (sockaddr *) &selected->addr)) {
+            if (vpn_endpoint_equals(ep, selected->endpoint.get())) {
                 result.endpoint = ep;
                 break;
             }
         }
         assert(result.endpoint != nullptr);
-        log_location(pinger, location->info->id, dbg, "Selected endpoint: {} ({}ms)", *result.endpoint, result.ping_ms);
+        result.through_relay = selected->through_relay;
+        log_location(pinger, location->info->id, dbg, "Selected endpoint: {} ({}{}) ({}ms)", result.endpoint->name,
+                result.through_relay ? "through relay " : "",
+                result.through_relay ? sockaddr_to_str((sockaddr *) &pinger->relay_address)
+                                     : sockaddr_to_str((sockaddr *) &result.endpoint->address),
+                result.ping_ms);
     } else {
-        log_location(pinger, location->info->id, dbg, "None of the addresses has been pinged successfully");
+        log_location(pinger, location->info->id, dbg, "None of the endpoints has been pinged successfully");
         result.ping_ms = -1;
     }
 
@@ -159,18 +167,20 @@ static std::optional<FinalizeLocationInfo> process_ping_result(LocationsPinger *
 
     switch (result->status) {
     case PING_OK: {
-        std::vector<PingedAddress> &dst = (result->addr->sa_family == AF_INET6) ? l->pinged_ipv6 : l->pinged_ipv4;
+        std::vector<PingedEndpoint> &dst =
+                (result->endpoint->address.ss_family == AF_INET6) ? l->pinged_ipv6 : l->pinged_ipv4;
         // This might not be the first result for this address
-        auto it = std::find_if(dst.begin(), dst.end(), [&](const PingedAddress &a) {
-            return sockaddr_equals((struct sockaddr *) &a.addr, result->addr);
+        auto it = std::find_if(dst.begin(), dst.end(), [&](const PingedEndpoint &a) {
+            return vpn_endpoint_equals(a.endpoint.get(), result->endpoint);
         });
         if (it == dst.end()) { // Add new result
-            dst.emplace_back(PingedAddress{result->ms, sockaddr_to_storage(result->addr)});
+            dst.emplace_back(
+                    PingedEndpoint{vpn_endpoint_clone(result->endpoint), result->ms, (bool) result->through_relay});
         } else {
             if (!pinger->query_all_interfaces) {
                 log_location(pinger, ping_get_id(result->ping), warn,
                         "Duplicate result for address {}. Please check that location doesn't contain duplicate IPs.",
-                        sockaddr_to_str(result->addr));
+                        sockaddr_to_str((sockaddr *) &result->endpoint->address));
             }
             it->ping_ms = std::min(result->ms, it->ping_ms);
         }
@@ -179,11 +189,11 @@ static std::optional<FinalizeLocationInfo> process_ping_result(LocationsPinger *
     case PING_FINISHED: {
         auto node = pinger->locations.extract(i);
         ping_destroy(node.key());
-        return {{std::move(node.mapped()), pinger->locations.empty()}};
+        return {{std::move(node.mapped()), pinger->locations.empty() && pinger->pending_locations.empty()}};
     }
     case PING_SOCKET_ERROR:
         if (result->socket_error == AG_EHOSTUNREACH || result->socket_error == AG_ENETUNREACH) {
-            if (result->addr->sa_family == AF_INET) {
+            if (result->endpoint->address.ss_family == AF_INET) {
                 l->ipv4_unavailable_errors_cnt += 1;
             } else {
                 l->ipv6_unavailable_errors_cnt += 1;
@@ -191,8 +201,9 @@ static std::optional<FinalizeLocationInfo> process_ping_result(LocationsPinger *
         }
         [[fallthrough]];
     case PING_TIMEDOUT:
-        log_location(pinger, ping_get_id(result->ping), dbg, "Failed to ping endpoint {} - error code {}",
-                sockaddr_to_str(result->addr), magic_enum::enum_name(result->status));
+        log_location(pinger, ping_get_id(result->ping), dbg, "Failed to ping endpoint {} ({}) - error code {}",
+                result->endpoint->name, sockaddr_to_str((sockaddr *) &result->endpoint->address),
+                magic_enum::enum_name(result->status));
         break;
     }
 
@@ -214,15 +225,11 @@ static void start_location_ping(LocationsPinger *pinger) {
     auto i = pinger->pending_locations.begin();
 
     log_location(pinger, i->info->id, dbg, "Starting location ping");
-    std::vector<sockaddr_storage> addresses;
-    addresses.reserve(i->info->endpoints.size);
-    std::transform(i->info->endpoints.data, i->info->endpoints.data + i->info->endpoints.size,
-            std::back_inserter(addresses), [](const VpnEndpoint &endpoint) {
-                return endpoint.address;
-            });
-
-    PingInfo ping_info = {pinger->loop, {addresses.data(), addresses.size()}, pinger->timeout_ms,
-            {pinger->interfaces.data(), pinger->interfaces.size()}, pinger->rounds, pinger->use_quic};
+    PingInfo ping_info = {pinger->loop, {i->info->endpoints.data, i->info->endpoints.size}, pinger->timeout_ms,
+            {pinger->interfaces.data(), pinger->interfaces.size()}, pinger->rounds, pinger->use_quic, pinger->anti_dpi};
+    if (pinger->relay_address.ss_family) {
+        ping_info.relay_address = (sockaddr *) &pinger->relay_address;
+    }
     Ping *ping = ping_start(&ping_info, {ping_handler, pinger});
     pinger->locations.emplace(ping, std::move(*i));
     pinger->pending_locations.pop_front();
@@ -260,6 +267,11 @@ LocationsPinger *locations_pinger_start(
     pinger->timeout_ms = info->timeout_ms;
     pinger->rounds = info->rounds;
     pinger->use_quic = info->use_quic;
+    pinger->anti_dpi = info->anti_dpi;
+
+    if (info->relay_address) {
+        pinger->relay_address = sockaddr_to_storage(info->relay_address);
+    }
 
     for (size_t i = 0; i < info->locations.size; ++i) {
         const VpnLocation *l = &info->locations.data[i];

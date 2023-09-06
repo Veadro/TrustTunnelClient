@@ -158,6 +158,10 @@ static void pinger_handler(void *arg, const LocationsPingerResult *result) {
                 ? VpnError{VPN_EC_LOCATION_UNAVAILABLE, "None of the endpoints were pinged successfully"}
                 : VpnError{VPN_EC_ERROR, "Failed to ping location"};
         log_vpn(vpn, warn, "{}", error.text);
+        if (!vpn->relay_addresses.empty()) {
+            vpn->relay_addresses_disqualified.push_back(vpn->relay_addresses.back());
+            vpn->relay_addresses.pop_back();
+        }
         vpn->fsm.perform_transition(vpn_fsm::CE_PING_FAIL, &error);
         return;
     }
@@ -175,8 +179,13 @@ static void pinger_handler(void *arg, const LocationsPingerResult *result) {
         return;
     }
 
-    vpn->selected_endpoint.emplace(vpn_endpoint_clone(result->endpoint));
-    log_vpn(vpn, dbg, "Using endpoint: {} (ping={}ms)", *result->endpoint, result->ping_ms);
+    vpn->selected_endpoint.emplace(vpn_endpoint_clone(result->endpoint),
+            result->through_relay ? std::make_optional(vpn->relay_addresses.back()) : std::nullopt);
+    log_vpn(vpn, dbg, "Using endpoint: {} (relay address={}) (ping={}ms)", *vpn->selected_endpoint->endpoint,
+            vpn->selected_endpoint->relay_address.has_value()
+                    ? sockaddr_to_str((sockaddr *) &*vpn->selected_endpoint->relay_address).c_str()
+                    : "none",
+            result->ping_ms);
 
     const auto *extra_result = (LocationsPingerResultExtra *) result;
     vpn->client.update_bypass_ip_availability(extra_result->ip_availability);
@@ -245,10 +254,19 @@ static void run_ping(void *ctx, void *) {
 
     vpn->stop_pinging();
 
+    if (vpn->relay_addresses.empty()) {
+        vpn->relay_addresses.insert(vpn->relay_addresses.end(), vpn->relay_addresses_disqualified.rbegin(),
+                vpn->relay_addresses_disqualified.rend());
+        vpn->relay_addresses_disqualified.clear();
+    }
+
     LocationsPingerInfo pinger_info = {
             .timeout_ms = vpn->upstream_config->location_ping_timeout_ms,
             .locations = {&vpn->upstream_config->location, 1},
-            .rounds = 1,
+            .rounds = vpn->relay_addresses.empty() ? 1u : 2u,
+            .use_quic = false,
+            .anti_dpi = vpn->upstream_config->anti_dpi,
+            .relay_address = (sockaddr *) (!vpn->relay_addresses.empty() ? &vpn->relay_addresses.back() : nullptr),
     };
     vpn->pinger.reset(locations_pinger_start(&pinger_info, {pinger_handler, vpn}, vpn->ev_loop.get()));
 
@@ -435,7 +453,7 @@ static void raise_state(void *ctx, void *) {
         break;
     case VPN_SS_CONNECTED:
         event.connected_info = {
-                .endpoint = vpn->selected_endpoint.value().get(), // NOLINT(bugprone-unchecked-optional-access)
+                .endpoint = vpn->selected_endpoint.value().endpoint.get(), // NOLINT(bugprone-unchecked-optional-access)
                 .protocol = vpn->client.endpoint_upstream->get_protocol(),
         };
         break;

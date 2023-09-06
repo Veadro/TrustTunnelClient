@@ -59,6 +59,16 @@ using ConnectRetryInfo = std::variant<
 
 } // namespace vpn_manager
 
+struct SelectedEndpoint {
+    AutoVpnEndpoint endpoint;
+    std::optional<sockaddr_storage> relay_address;
+
+    SelectedEndpoint(AutoVpnEndpoint endpoint, const std::optional<sockaddr_storage> &relay_address)
+            : endpoint{std::move(endpoint)}
+            , relay_address{relay_address} {
+    }
+};
+
 struct Vpn {
     Vpn(const Vpn &) = delete;
     Vpn(Vpn &&) = delete;
@@ -87,8 +97,10 @@ struct Vpn {
     VpnHandler handler = {};
     DeclPtr<VpnNetworkManager, &vpn_network_manager_destroy> network_manager{vpn_network_manager_get()};
     AutoPod<VpnUpstreamConfig, vpn_upstream_config_destroy> upstream_config;
+    std::vector<sockaddr_storage> relay_addresses;
+    std::vector<sockaddr_storage> relay_addresses_disqualified;
     /** The endpoint the client is connected or trying to connect to */
-    std::optional<AutoVpnEndpoint> selected_endpoint;
+    std::optional<SelectedEndpoint> selected_endpoint;
     bool network_changed_before_recovery = false;
 
     DeclPtr<LocationsPinger, &locations_pinger_destroy> pinger;

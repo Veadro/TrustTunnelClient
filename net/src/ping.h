@@ -2,6 +2,7 @@
 
 #include <span>
 
+#include "net/utils.h"
 #include "vpn/event_loop.h"
 
 namespace ag {
@@ -19,13 +20,14 @@ struct PingResult {
     Ping *ping;                  // ping pointer (don't delete from callback unless PING_FINISHED is reported)
     PingStatus status;           // ping status
     int socket_error;            // has sense if `status` == `PING_SOCKET_ERROR`
-    const struct sockaddr *addr; // pinged address
+    const VpnEndpoint *endpoint; // pinged endpoint
     int ms;                      // RTT value
+    int through_relay;           // endpoint was pinged through a relay
 };
 
 struct PingInfo {
-    VpnEventLoop *loop = nullptr;                ///< Event loop
-    std::span<sockaddr_storage> addrs; ///< List of addresses to ping
+    VpnEventLoop *loop = nullptr;           ///< Event loop
+    std::span<const VpnEndpoint> endpoints; ///< List of endpoints to ping
 
     /// The maximum amount of time the whole pinging process is allowed to take.
     /// The effective timeout before we report that a connection to an address
@@ -39,6 +41,10 @@ struct PingInfo {
 
     uint32_t nrounds = 0; ///< Number of pinging rounds. If 0, `DEFAULT_PING_ROUNDS` will be assigned.
     bool use_quic = false; ///< Use QUIC version negotiation instead of TCP handshake
+    bool anti_dpi = false; ///< Enable anti-DPI measures
+
+    /// If not NULL, the address of a relay to use when pinging fails using an endpoint's address.
+    const sockaddr *relay_address = nullptr;
 };
 
 struct PingHandler {

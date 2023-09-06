@@ -26,10 +26,11 @@ static void free_locations_pinger_info(ag::LocationsPingerInfo *info) {
     }
 
     for (size_t i = 0; i < info->locations.size; ++i) {
-        vpn_location_destroy(&info->locations.data[i]);
+        vpn_location_destroy((VpnLocation *) &info->locations.data[i]);
     }
 
-    free(info->locations.data);
+    free((VpnLocation *) info->locations.data);
+    free((sockaddr *) info->relay_address);
 
     delete info;
 }
@@ -48,8 +49,14 @@ static test_mock::LocationsPingerInfo make_deep_copy(const ag::LocationsPingerIn
 
     for (size_t i = 0; i < src->locations.size; ++i) {
         AutoVpnLocation location = vpn_location_clone(&src->locations.data[i]);
-        std::memcpy(&dst->locations.data[i], location.get(), sizeof(*location.get()));
+        std::memcpy((VpnLocation *) &dst->locations.data[i], location.get(), sizeof(*location.get()));
         location.release();
+    }
+
+    if (src->relay_address) {
+        auto *address_copy = (sockaddr_storage *) malloc(sizeof(sockaddr_storage));
+        *address_copy = sockaddr_to_storage(src->relay_address);
+        dst->relay_address = (sockaddr *) address_copy;
     }
 
     return dst;
