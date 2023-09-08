@@ -1,5 +1,7 @@
 # CHANGELOG
 
+## 0.92.90
+
 * Changes in pinging and locations API.
     * Removed `VpnUpstreamConfig::relay_addresses` and `LocationsPingerInfo::relay_address`.
     * Added `VpnLocation::relay_addresses`.
