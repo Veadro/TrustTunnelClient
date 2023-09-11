@@ -169,9 +169,9 @@ public:
     Tunnel tun = {};
     sockaddr_storage src{};
     TunnelAddress dst;
-    TestUpstream *redirect_upstream = nullptr;
-    TestUpstream *bypass_upstream = nullptr;
-    TestListener *client_listener = nullptr;
+    std::shared_ptr<TestUpstream> redirect_upstream;
+    std::shared_ptr<TestUpstream> bypass_upstream;
+    std::shared_ptr<TestListener> client_listener;
     int connection_protocol = IPPROTO_TCP;
 
     static void redirect_upstream_handler(void *arg, ServerEvent what, void *data) {
@@ -198,20 +198,20 @@ public:
         vpn.parameters.handler = {&vpn_handler, this};
         vpn.parameters.network_manager = network_manager.get();
 
-        vpn.endpoint_upstream = std::make_unique<TestUpstream>();
-        ASSERT_TRUE(vpn.endpoint_upstream->init(&vpn, {&redirect_upstream_handler, this}));
-        redirect_upstream = (TestUpstream *) vpn.endpoint_upstream.get();
-        vpn.bypass_upstream = std::make_unique<TestUpstream>();
-        ASSERT_TRUE(vpn.bypass_upstream->init(&vpn, {&bypass_upstream_handler, this}));
-        bypass_upstream = (TestUpstream *) vpn.bypass_upstream.get();
+        redirect_upstream = std::make_unique<TestUpstream>();
+        ASSERT_TRUE(redirect_upstream->init(&vpn, {&redirect_upstream_handler, this}));
+        vpn.endpoint_upstream = redirect_upstream;
+        bypass_upstream = std::make_unique<TestUpstream>();
+        ASSERT_TRUE(bypass_upstream->init(&vpn, {&bypass_upstream_handler, this}));
+        vpn.bypass_upstream = bypass_upstream;
 
-        vpn.client_listener = std::make_unique<TestListener>();
-        ASSERT_EQ(ClientListener::InitResult::SUCCESS, vpn.client_listener->init(&vpn, {&listener_handler, this}));
-        client_listener = (TestListener *) vpn.client_listener.get();
+        client_listener = std::make_unique<TestListener>();
+        ASSERT_EQ(ClientListener::InitResult::SUCCESS, client_listener->init(&vpn, {&listener_handler, this}));
+        vpn.client_listener = client_listener;
 
         ASSERT_TRUE(tun.init(&vpn));
 
-        tun.upstream_handler(vpn.endpoint_upstream.get(), SERVER_EVENT_SESSION_OPENED, nullptr);
+        tun.upstream_handler(vpn.endpoint_upstream, SERVER_EVENT_SESSION_OPENED, nullptr);
     }
 
     void TearDown() override {
@@ -374,7 +374,7 @@ class TestFakeUpstream : public FakeUpstream {
 public:
     std::vector<uint64_t> closing_connections;
 
-    explicit TestFakeUpstream(std::unique_ptr<ServerUpstream> orig)
+    explicit TestFakeUpstream(std::shared_ptr<ServerUpstream> orig)
             : FakeUpstream(0) {
         ((ServerUpstream *) this)->init(orig->vpn, orig->handler);
     }
@@ -396,7 +396,7 @@ public:
     void SetUp() override {
         TunnelTest::SetUp();
 
-        tun.fake_upstream = std::make_unique<TestFakeUpstream>(std::move(tun.fake_upstream));
+        tun.fake_upstream = std::make_shared<TestFakeUpstream>(std::move(tun.fake_upstream));
         ASSERT_TRUE(tun.fake_upstream->open_session());
         this->fake_upstream = (TestFakeUpstream *) tun.fake_upstream.get();
 
@@ -468,7 +468,7 @@ public:
                 0x00, 0x29, 0xff, 0xd6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
         ServerReadEvent upstream_read_event = {upstream_conn_id, DNS_REPLY, std::size(DNS_REPLY), 0};
-        tun.upstream_handler(redirect_upstream, SERVER_EVENT_READ, &upstream_read_event);
+        tun.upstream_handler(bypass_upstream, SERVER_EVENT_READ, &upstream_read_event);
         ASSERT_EQ(upstream_read_event.result, int(std::size(DNS_REPLY)));
 
         run_event_loop_once();

@@ -45,8 +45,10 @@ iptables -I OUTPUT -o eth0 -d "example.org" -j ACCEPT
 iptables -I OUTPUT -o eth0 -d "$ENDPOINT_IP" -j ACCEPT
 iptables -A OUTPUT -o eth0 -j DROP
 
-ip6tables -I OUTPUT -o eth0 -d "$ENDPOINT_IPV6" -j ACCEPT
-ip6tables -A OUTPUT -o eth0 -j DROP
+if [ -n "$ENDPOINT_IPV6" ]; then
+  ip6tables -I OUTPUT -o eth0 -d "$ENDPOINT_IPV6" -j ACCEPT
+  ip6tables -A OUTPUT -o eth0 -j DROP
+fi
 
 if [[ "$MODE" == "tun" ]]; then
   cat >>standalone_client.toml <<EOF

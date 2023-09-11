@@ -43,11 +43,11 @@ struct Tunnel {
     ag::Logger log{"TUNNEL"};
     int id;
     bool endpoint_upstream_connected = false;
-    std::unique_ptr<VpnDnsResolver> dns_resolver;
+    std::shared_ptr<VpnDnsResolver> dns_resolver;
     std::unordered_map<VpnDnsResolveId, DnsResolveWaiter> dns_resolve_waiters;
     event_loop::AutoTaskId repeat_exclusions_resolve_task;
-    std::unique_ptr<ServerUpstream> fake_upstream;
-    std::unique_ptr<PlainDnsManager> plain_dns_manager;
+    std::shared_ptr<ServerUpstream> fake_upstream;
+    std::shared_ptr<PlainDnsManager> plain_dns_manager;
     std::unique_ptr<ConnectionStatisticsMonitor> statistics_monitor;
 
     Tunnel();
@@ -63,8 +63,8 @@ struct Tunnel {
 
     void deinit();
 
-    void upstream_handler(ServerUpstream *upstream, ServerEvent what, void *data);
-    void listener_handler(ClientListener *listener, ClientEvent what, void *data);
+    void upstream_handler(const std::shared_ptr<ServerUpstream> &upstream, ServerEvent what, void *data);
+    void listener_handler(const std::shared_ptr<ClientListener> &listener, ClientEvent what, void *data);
 
     void complete_connect_request(uint64_t id, std::optional<VpnConnectAction> action);
     void reset_connections(int uid);

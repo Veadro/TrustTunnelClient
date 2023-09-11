@@ -3,6 +3,7 @@
 #include <bitset>
 #include <cstdint>
 #include <list>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -60,8 +61,8 @@ class ServerUpstream;
 struct VpnConnection {
     uint64_t client_id = NON_ID;
     uint64_t server_id = NON_ID;
-    ClientListener *listener = nullptr;
-    ServerUpstream *upstream = nullptr;
+    std::weak_ptr<ClientListener> listener;
+    std::weak_ptr<ServerUpstream> upstream;
     VpnConnectionState state = CONNS_WAITING_ACTION;
     TunnelAddressPair addr;
     int proto = 0;

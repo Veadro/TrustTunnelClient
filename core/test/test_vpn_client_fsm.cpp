@@ -246,9 +246,9 @@ bool Tunnel::init(VpnClient *) {
 }
 void Tunnel::deinit() {
 }
-void Tunnel::upstream_handler(ServerUpstream *, ServerEvent, void *) {
+void Tunnel::upstream_handler(const std::shared_ptr<ServerUpstream> &, ServerEvent, void *) {
 }
-void Tunnel::listener_handler(ClientListener *, ClientEvent, void *) {
+void Tunnel::listener_handler(const std::shared_ptr<ClientListener> &, ClientEvent, void *) {
 }
 void Tunnel::complete_connect_request(uint64_t, std::optional<VpnConnectAction> action) {
     last_tunnel_connect_action = action;

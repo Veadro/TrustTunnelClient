@@ -218,9 +218,9 @@ public:
     Tunnel tun = {};
     sockaddr_storage src{};
     TunnelAddress dst;
-    TestUpstream *redirect_upstream = nullptr;
-    TestUpstream *bypass_upstream = nullptr;
-    TestListener *client_listener = nullptr;
+    std::shared_ptr<TestUpstream> redirect_upstream;
+    std::shared_ptr<TestUpstream> bypass_upstream;
+    std::shared_ptr<TestListener> client_listener;
     uint64_t client_id = NON_ID;
     uint64_t redirect_id = NON_ID;
     uint64_t bypass_id = NON_ID;
@@ -250,20 +250,20 @@ public:
         vpn.parameters.handler = {&vpn_handler, this};
         vpn.parameters.network_manager = network_manager.get();
 
-        vpn.endpoint_upstream = std::make_unique<TestUpstream>();
-        ASSERT_TRUE(vpn.endpoint_upstream->init(&vpn, {&redirect_upstream_handler, this}));
-        redirect_upstream = (TestUpstream *) vpn.endpoint_upstream.get();
-        vpn.bypass_upstream = std::make_unique<TestUpstream>();
-        ASSERT_TRUE(vpn.bypass_upstream->init(&vpn, {&bypass_upstream_handler, this}));
-        bypass_upstream = (TestUpstream *) vpn.bypass_upstream.get();
+        redirect_upstream = std::make_shared<TestUpstream>();
+        ASSERT_TRUE(redirect_upstream->init(&vpn, {&redirect_upstream_handler, this}));
+        vpn.endpoint_upstream = redirect_upstream;
+        bypass_upstream = std::make_shared<TestUpstream>();
+        ASSERT_TRUE(bypass_upstream->init(&vpn, {&bypass_upstream_handler, this}));
+        vpn.bypass_upstream = bypass_upstream;
 
-        vpn.client_listener = std::make_unique<TestListener>();
-        ASSERT_EQ(ClientListener::InitResult::SUCCESS, vpn.client_listener->init(&vpn, {&listener_handler, this}));
-        client_listener = (TestListener *) vpn.client_listener.get();
+        client_listener = std::make_shared<TestListener>();
+        ASSERT_EQ(ClientListener::InitResult::SUCCESS, client_listener->init(&vpn, {&listener_handler, this}));
+        vpn.client_listener = client_listener;
 
         ASSERT_TRUE(tun.init(&vpn));
 
-        tun.upstream_handler(vpn.endpoint_upstream.get(), SERVER_EVENT_SESSION_OPENED, nullptr);
+        tun.upstream_handler(vpn.endpoint_upstream, SERVER_EVENT_SESSION_OPENED, nullptr);
 
         ASSERT_TRUE(vpn.domain_filter.update_exclusions(VPN_MODE_GENERAL, "example.com"));
 

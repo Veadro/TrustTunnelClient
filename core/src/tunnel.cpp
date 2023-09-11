@@ -122,8 +122,8 @@ static void destroy_connection(Tunnel *tunnel, uint64_t client_id, uint64_t serv
         if (conn->flags.test(CONNF_MONITOR_STATS)) {
             tunnel->statistics_monitor->unregister_conn(conn->client_id, /*do_report*/ true);
         }
-        if (conn->listener == tunnel->vpn->client_listener.get()) {
-            VpnTunnelConnectionClosedEvent event {
+        if (!conn->listener.expired() && conn->listener.lock().get() == tunnel->vpn->client_listener.get()) {
+            VpnTunnelConnectionClosedEvent event{
                     .id = conn->client_id,
             };
             const vpn_client::Handler &handler = tunnel->vpn->parameters.handler;
@@ -169,37 +169,51 @@ static void complete_connect_request_task(void *arg, TaskId) {
 
     conn->complete_connect_request_task.release();
 
+    std::shared_ptr<ClientListener> listener = conn->listener.lock();
+    if (listener == nullptr) {
+        log_conn(tunnel, conn, dbg, "Listener was deleted");
+        destroy_connection(tunnel, ctx->listener_conn_id, NON_ID);
+        return;
+    }
+
     switch (conn->state) {
     case CONNS_WAITING_RESOLVE:
     case CONNS_WAITING_RESPONSE:
     case CONNS_WAITING_ACTION:
-        conn->listener->complete_connect_request(conn->client_id, server_error_to_connect_result(ctx->err_code));
+        listener->complete_connect_request(conn->client_id, server_error_to_connect_result(ctx->err_code));
         break;
     case CONNS_WAITING_ACCEPT:
     case CONNS_CONNECTED:
     case CONNS_CONNECTED_MIGRATING:
     case CONNS_WAITING_RESPONSE_MIGRATING:
         log_conn(tunnel, conn, dbg, "Invalid connection state: {}", magic_enum::enum_name(conn->state));
-        conn->listener->close_connection(ctx->listener_conn_id, false, false);
+        listener->close_connection(ctx->listener_conn_id, false, false);
         assert(0);
         break;
     }
 }
 
 static void close_client_side_connection(Tunnel *self, VpnConnection *conn, int err_code, bool async) {
+    std::shared_ptr<ClientListener> listener = conn->listener.lock();
+    if (listener == nullptr) {
+        log_conn(self, conn, dbg, "Listener was deleted");
+        destroy_connection(self, conn->client_id, conn->server_id);
+        return;
+    }
+
     switch (conn->state) {
     case CONNS_WAITING_ACCEPT:
     case CONNS_CONNECTED:
     case CONNS_CONNECTED_MIGRATING:
         // will be deleted in connection closed event
-        conn->listener->close_connection(conn->client_id, err_code == 0, async);
+        listener->close_connection(conn->client_id, err_code == 0, async);
         break;
     case CONNS_WAITING_RESOLVE:
     case CONNS_WAITING_RESPONSE:
     case CONNS_WAITING_ACTION:
         err_code = (err_code == 0) ? ag::utils::AG_ECONNREFUSED : err_code;
         if (!async) {
-            conn->listener->complete_connect_request(conn->client_id, server_error_to_connect_result(err_code));
+            listener->complete_connect_request(conn->client_id, server_error_to_connect_result(err_code));
             break;
         }
 
@@ -234,7 +248,7 @@ static void close_client_side(Tunnel *tunnel, ServerUpstream *upstream) {
     ids.reserve(kh_size(table));
 
     vpn_connections_foreach(table, [&](VpnConnection *conn) {
-        if (conn->upstream == upstream) {
+        if (!conn->upstream.expired() && conn->upstream.lock().get() == upstream) {
             ids.push_back(conn->client_id);
         }
     });
@@ -326,13 +340,7 @@ static bool is_domain_scannable_port(uint16_t port) {
 
 static void dns_resolver_handler(void *arg, ClientEvent what, void *data) {
     auto *self = (Tunnel *) arg;
-    self->listener_handler(self->dns_resolver.get(), what, data);
-}
-
-static bool check_upstream(const Tunnel *self, const VpnConnection *conn, const ServerUpstream *u) {
-    return (self->fake_upstream.get() == u || self->vpn->endpoint_upstream.get() == u
-                   || self->vpn->bypass_upstream.get() == u || self->plain_dns_manager.get() == u)
-            && (conn == nullptr || conn->upstream == u);
+    self->listener_handler(self->dns_resolver, what, data);
 }
 
 static bool send_buffered_data(const Tunnel *self, uint64_t conn_client_id) {
@@ -342,10 +350,22 @@ static bool send_buffered_data(const Tunnel *self, uint64_t conn_client_id) {
         return false;
     }
 
+    std::shared_ptr<ServerUpstream> upstream = conn->upstream.lock();
+    if (upstream == nullptr) {
+        log_conn(self, conn, dbg, "Upstream was deleted");
+        return false;
+    }
+
+    std::shared_ptr<ClientListener> listener = conn->listener.lock();
+    if (listener == nullptr) {
+        log_conn(self, conn, dbg, "Listener was deleted");
+        return false;
+    }
+
     conn->send_buffered_task.release();
     for (std::vector<uint8_t> &packet : std::exchange(conn->buffered_packets, {})) {
         log_conn(self, conn, trace, "Sending {} bytes from buffered packets", packet.size());
-        const ssize_t r = conn->upstream->send(conn->server_id, packet.data(), packet.size());
+        ssize_t r = upstream->send(conn->server_id, packet.data(), packet.size());
         if (r >= 0 && size_t(r) == packet.size()) {
             conn->outgoing_bytes += r;
             if (conn->flags.test(CONNF_MONITOR_STATS)) {
@@ -360,22 +380,21 @@ static bool send_buffered_data(const Tunnel *self, uint64_t conn_client_id) {
             log_conn(self, conn, dbg, "Sent partially: {} bytes out of {}", r, packet.size());
         }
 
-        conn->listener->close_connection(conn_client_id, false, false);
+        listener->close_connection(conn_client_id, false, false);
         return false;
     }
 
-    size_t server_can_send = conn->upstream->available_to_send(conn->server_id);
+    size_t server_can_send = upstream->available_to_send(conn->server_id);
     log_conn(self, conn, trace, "Server side can send {} bytes", server_can_send);
-    conn->listener->turn_read(conn->client_id, server_can_send > 0);
-    conn->upstream->update_flow_control(conn->server_id, conn->listener->flow_control_info(conn_client_id));
+    listener->turn_read(conn->client_id, server_can_send > 0);
+    upstream->update_flow_control(conn->server_id, listener->flow_control_info(conn_client_id));
     return true;
 }
 
-void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *data) {
+void Tunnel::upstream_handler(const std::shared_ptr<ServerUpstream> &upstream, ServerEvent what, void *data) {
     switch (what) {
     case SERVER_EVENT_SESSION_OPENED:
-        log_tun(this, dbg, "Upstream: {}", (void *) upstream);
-        if (upstream == this->vpn->endpoint_upstream.get()) {
+        if (upstream.get() == this->vpn->endpoint_upstream.get()) {
             assert(!this->endpoint_upstream_connected);
             this->endpoint_upstream_connected = true;
         }
@@ -384,26 +403,39 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
         // do nothing
         break;
     case SERVER_EVENT_SESSION_CLOSED:
-        close_client_side(this, upstream);
+        close_client_side(this, upstream.get());
         break;
     case SERVER_EVENT_CONNECTION_OPENED: {
         uint64_t id = *(uint64_t *) data;
 
         VpnConnection *conn = vpn_connection_get_by_id(this->connections.by_server_id, id);
         if (conn == nullptr) {
-            log_tun(this, err, "Got server connect result for inexistent or already closed connection: {}", id);
+            log_tun(this, warn, "Got server connect result for inexistent or already closed connection: {}", id);
             upstream->close_connection(id, false, true);
             assert(0);
             break;
         }
 
-        assert(upstream == conn->upstream);
+        if (upstream.get() != conn->upstream.lock().get()) {
+            log_conn(this, conn, warn, "Upstream mismatch");
+            upstream->close_connection(id, false, true);
+            assert(0);
+            break;
+        }
+
+        std::shared_ptr<ClientListener> listener = conn->listener.lock();
+        if (listener == nullptr) {
+            log_conn(this, conn, dbg, "Listener was deleted");
+            upstream->close_connection(id, false, true);
+            assert(0);
+            break;
+        }
 
         switch (conn->state) {
         case CONNS_WAITING_RESPONSE: {
             log_conn(this, conn, dbg, "Successfully made tunnel");
             conn->state = CONNS_WAITING_ACCEPT;
-            conn->listener->complete_connect_request(conn->client_id, CCR_PASS);
+            listener->complete_connect_request(conn->client_id, CCR_PASS);
             break;
         }
         case CONNS_WAITING_RESPONSE_MIGRATING: {
@@ -411,7 +443,7 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
                     vpn_connection_get_by_id(this->connections.by_client_id, conn->migrating_client_id);
             if (src_conn == nullptr) {
                 log_conn(this, conn, dbg, "Migrating connection closed while had being connecting to another upstream");
-                conn->upstream->close_connection(id, false, true);
+                upstream->close_connection(id, false, true);
                 break;
             }
 
@@ -424,7 +456,10 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
                         ((UdpVpnConnection *) src_conn)->buffered_packets);
             }
 
-            src_conn->upstream->close_connection(src_conn->server_id, false, false);
+            if (std::shared_ptr<ServerUpstream> src_conn_upstream = src_conn->upstream.lock();
+                    src_conn_upstream != nullptr) {
+                src_conn_upstream->close_connection(src_conn->server_id, false, false);
+            }
 
             log_conn(this, conn, dbg, "Upstream has been switched successfully");
             if (!conn->buffered_packets.empty()) {
@@ -446,15 +481,15 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
                 break;
             }
 
-            conn->listener->turn_read(conn->client_id, true);
-            conn->upstream->update_flow_control(conn->server_id, conn->listener->flow_control_info(conn->client_id));
+            listener->turn_read(conn->client_id, true);
+            upstream->update_flow_control(conn->server_id, listener->flow_control_info(conn->client_id));
             break;
         }
         default:
             log_conn(this, conn, err, "Connection has invalid state: {} (event={})", magic_enum::enum_name(conn->state),
                     magic_enum::enum_name(what));
             assert(0);
-            conn->upstream->close_connection(id, false, true);
+            upstream->close_connection(id, false, true);
             break;
         }
         break;
@@ -465,15 +500,17 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
         VpnConnection *conn = vpn_connection_get_by_id(this->connections.by_server_id, id);
         if (conn == nullptr) {
             log_tun(this, dbg, "Got close event for nonexistent or already closed connection: R:{}", id);
-            assert(0);
             destroy_connection(this, NON_ID, id);
+            assert(0);
             break;
         }
 
         log_conn(this, conn, dbg, "Connection closed");
-        if (nullptr != vpn_connection_get_by_id(this->connections.by_client_id, conn->client_id)) {
+        if (std::shared_ptr<ClientListener> listener;
+                nullptr != vpn_connection_get_by_id(this->connections.by_client_id, conn->client_id)
+                && nullptr != (listener = conn->listener.lock())) {
             vpn_connection_remove(this->connections.by_server_id, conn->server_id);
-            conn->listener->turn_read(conn->client_id, false);
+            listener->turn_read(conn->client_id, false);
             close_client_side_connection(this, conn, 0, false);
         } else {
             destroy_connection(this, conn->client_id, conn->server_id);
@@ -486,8 +523,23 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
         VpnConnection *conn = vpn_connection_get_by_id(this->connections.by_server_id, event->id);
         if (conn == nullptr) {
             log_tun(this, dbg, "Got data from server for inexistent or already closed connection: {}", event->id);
-            assert(0);
             event->result = -1;
+            assert(0);
+            break;
+        }
+
+        if (upstream.get() != conn->upstream.lock().get()) {
+            log_conn(this, conn, warn, "Upstream mismatch");
+            event->result = -1;
+            assert(0);
+            break;
+        }
+
+        std::shared_ptr<ClientListener> listener = conn->listener.lock();
+        if (listener == nullptr) {
+            log_conn(this, conn, dbg, "Listener was deleted");
+            event->result = -1;
+            assert(0);
             break;
         }
 
@@ -505,31 +557,31 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
                 break;
             case ALUA_SHUTDOWN:
                 log_conn(this, conn, dbg, "Connection had been routed {} while should've been routed {}",
-                        (conn->upstream == this->vpn->endpoint_upstream.get()) ? "through VPN endpoint"
+                        (upstream.get() == this->vpn->endpoint_upstream.get()) ? "through VPN endpoint"
                                                                                : "directly to target host",
-                        (conn->upstream == this->vpn->endpoint_upstream.get()) ? "directly to target host"
+                        (upstream.get() == this->vpn->endpoint_upstream.get()) ? "directly to target host"
                                                                                : "through VPN endpoint");
                 close_client_side_connection(this, conn, 0, false);
                 return;
             case ALUA_BLOCK:
                 log_conn(this, conn, dbg, "Dropped QUIC connection");
-                conn->upstream->update_flow_control(event->id, {});
+                upstream->update_flow_control(event->id, {});
                 close_client_side_connection(this, conn, -1, /* async */ false);
                 return;
             }
         }
 
-        event->result = (int) conn->listener->send(conn->client_id, event->data, event->length);
+        event->result = (int) listener->send(conn->client_id, event->data, event->length);
         if (event->result == 0) {
-            conn->upstream->update_flow_control(conn->server_id, {});
+            upstream->update_flow_control(conn->server_id, {});
         } else if (event->result > 0) {
             conn->incoming_bytes += event->result;
             if (conn->flags.test(CONNF_MONITOR_STATS)) {
                 this->statistics_monitor->update_download(conn->client_id, event->result);
             }
-            TcpFlowCtrlInfo info = conn->listener->flow_control_info(conn->client_id);
+            TcpFlowCtrlInfo info = listener->flow_control_info(conn->client_id);
             log_conn(this, conn, trace, "Client side can send {} bytes", info.send_buffer_size);
-            conn->upstream->update_flow_control(conn->server_id, info);
+            upstream->update_flow_control(conn->server_id, info);
         } else {
             log_conn(this, conn, dbg, "Failed to send data from server");
             // connection will be closed inside upstream
@@ -544,12 +596,27 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
             break;
         }
 
+        if (upstream.get() != conn->upstream.lock().get()) {
+            log_conn(this, conn, warn, "Upstream mismatch");
+            upstream->close_connection(id, false, true);
+            assert(0);
+            break;
+        }
+
+        std::shared_ptr<ClientListener> listener = conn->listener.lock();
+        if (listener == nullptr) {
+            log_conn(this, conn, dbg, "Listener was deleted");
+            upstream->close_connection(id, false, true);
+            assert(0);
+            break;
+        }
+
         switch (conn->state) {
         case CONNS_CONNECTED: {
-            conn->listener->consume(conn->client_id, event->length);
+            listener->consume(conn->client_id, event->length);
 
-            size_t server_can_send = conn->upstream->available_to_send(conn->server_id);
-            conn->listener->turn_read(conn->client_id, server_can_send > 0);
+            size_t server_can_send = upstream->available_to_send(conn->server_id);
+            listener->turn_read(conn->client_id, server_can_send > 0);
 
             if (event->length > 0) {
                 log_conn(this, conn, trace, "{} bytes sent to server (server side can send {} bytes)", event->length,
@@ -569,14 +636,16 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
         if (conn == nullptr) {
             break;
         }
-        event->length = conn->listener->flow_control_info(conn->client_id).send_buffer_size;
+        if (std::shared_ptr<ClientListener> listener = conn->listener.lock(); listener != nullptr) {
+            event->length = listener->flow_control_info(conn->client_id).send_buffer_size;
+        }
         break;
     }
     case SERVER_EVENT_ERROR: {
         const ServerError *event = (ServerError *) data;
 
         if (event->id == NON_ID) {
-            close_client_side(this, upstream);
+            close_client_side(this, upstream.get());
             break;
         }
 
@@ -598,13 +667,21 @@ void Tunnel::upstream_handler(ServerUpstream *upstream, ServerEvent what, void *
             log_conn(this, conn, dbg, "Failed to switch upstream: {} ({})", safe_to_string_view(event->error.text),
                     event->error.code);
 
-            VpnConnection *src_conn = vpn_connection_get_by_id(
-                    this->connections.by_client_id, conn->migrating_client_id);
-            if (src_conn != nullptr) {
-                src_conn->upstream->close_connection(src_conn->server_id, false, true);
+            VpnConnection *src_conn =
+                    vpn_connection_get_by_id(this->connections.by_client_id, conn->migrating_client_id);
+            if (src_conn == nullptr) {
+                // do nothing
+            } else {
+                if (upstream.get() != src_conn->upstream.lock().get()) {
+                    log_conn(this, src_conn, warn, "Upstream mismatch");
+                    assert(0);
+                }
+                upstream->close_connection(src_conn->server_id, false, true);
             }
 
-            conn->upstream->close_connection(conn->server_id, false, true);
+            if (std::shared_ptr<ServerUpstream> conn_upstream = conn->upstream.lock(); conn_upstream != nullptr) {
+                conn_upstream->close_connection(conn->server_id, false, true);
+            }
             need_close_client_side = false;
             break;
         }
@@ -676,7 +753,7 @@ constexpr VpnConnectAction invert_action(VpnConnectAction action) {
     return action;
 }
 
-static ServerUpstream *select_upstream(const Tunnel *self, VpnConnectAction action, VpnConnection *conn) {
+static std::shared_ptr<ServerUpstream> select_upstream(const Tunnel *self, VpnConnectAction action, VpnConnection *conn) {
     bool is_plain_dns_connection = conn != nullptr && conn->flags.test(CONNF_PLAIN_DNS_CONNECTION);
     switch (action) {
     case VPN_CA_DEFAULT:
@@ -685,10 +762,11 @@ static ServerUpstream *select_upstream(const Tunnel *self, VpnConnectAction acti
                 && conn->flags.test(CONNF_SUSPECT_EXCLUSION)
                 && nullptr != (dst = std::get_if<sockaddr_storage>(&conn->addr.dst))
                 && is_domain_scannable_port(sockaddr_get_port((sockaddr *) dst))) {
-            return self->fake_upstream.get();
+            return self->fake_upstream;
         }
 
-        if (conn != nullptr && conn->listener == self->plain_dns_manager.get()) {
+        if (conn != nullptr && !conn->listener.expired()
+                && conn->listener.lock().get() == self->plain_dns_manager.get()) {
             switch (self->plain_dns_manager->get_routing_policy(conn->client_id)
                             .value_or(PlainDnsMessageHandler::RP_DEFAULT)) {
             case PlainDnsMessageHandler::RP_DEFAULT:
@@ -713,18 +791,18 @@ static ServerUpstream *select_upstream(const Tunnel *self, VpnConnectAction acti
         break;
     case VPN_CA_FORCE_BYPASS:
         if (!is_plain_dns_connection) {
-            return self->vpn->bypass_upstream.get();
+            return self->vpn->bypass_upstream;
         }
         break;
     case VPN_CA_FORCE_REDIRECT:
         if (!is_plain_dns_connection) {
-            return self->vpn->endpoint_upstream.get();
+            return self->vpn->endpoint_upstream;
         }
         break;
     }
 
     if (is_plain_dns_connection) {
-        return (PlainDnsClientSideAdapter *) self->plain_dns_manager.get();
+        return self->plain_dns_manager;
     }
 
     return nullptr;
@@ -734,17 +812,17 @@ static ServerUpstream *select_upstream(const Tunnel *self, VpnConnectAction acti
  * @return The result code which should be set to the event
  */
 [[nodiscard]] static ssize_t initiate_connection_migration(
-        Tunnel *self, VpnConnection *conn, ServerUpstream *upstream, U8View packet) {
+        Tunnel *self, VpnConnection *conn, std::shared_ptr<ServerUpstream> upstream, U8View packet) {
     if (upstream == nullptr) {
         log_conn(self, conn, dbg, "Can't start migration due to upstream isn't selected");
         return -1;
     }
 
     log_conn(self, conn, dbg, "Migrating to {} upstream",
-            (upstream == self->vpn->endpoint_upstream.get())         ? "VPN endpoint"
-                    : (upstream == self->vpn->bypass_upstream.get()) ? "direct"
-                    : (upstream == self->fake_upstream.get())        ? "fake"
-                                                                     : "unknown");
+            (upstream.get() == self->vpn->endpoint_upstream.get())         ? "VPN endpoint"
+                    : (upstream.get() == self->vpn->bypass_upstream.get()) ? "direct"
+                    : (upstream.get() == self->fake_upstream.get())        ? "fake"
+                                                                           : "unknown");
 
     uint64_t server_id = upstream->open_connection(&conn->addr, conn->proto, {});
     if (server_id == NON_ID) {
@@ -770,12 +848,17 @@ static ServerUpstream *select_upstream(const Tunnel *self, VpnConnectAction acti
         processed = packet.size();
     } else {
         sw_conn->buffered_packets = std::move(conn->buffered_packets);
-        conn->listener->turn_read(conn->client_id, false);
+        if (std::shared_ptr<ClientListener> listener = conn->listener.lock(); listener != nullptr) {
+            listener->turn_read(conn->client_id, false);
+        } else {
+            log_conn(self, conn, dbg, "Listener was deleted");
+            return -1;
+        }
     }
 
     conn->state = CONNS_CONNECTED_MIGRATING;
-    if (conn->upstream != nullptr) {
-        conn->upstream->update_flow_control(conn->server_id, {});
+    if (std::shared_ptr<ServerUpstream> conn_upstream = conn->upstream.lock(); conn_upstream != nullptr) {
+        conn_upstream->update_flow_control(conn->server_id, {});
     }
 
     log_conn(self, sw_conn, trace, "Connecting...");
@@ -871,7 +954,7 @@ static std::optional<sockaddr_storage> select_resolved_destination_address(
             }
         }
 
-        ServerUpstream *upstream = select_upstream(self, action, nullptr);
+        std::shared_ptr<ServerUpstream> upstream = select_upstream(self, action, nullptr);
         if (upstream != nullptr
                 && upstream->ip_version_availability.test(sa_family_to_ip_version(address.ss_family).value())) {
             return address;
@@ -954,10 +1037,11 @@ static void on_destination_resolve_result(void *arg, VpnDnsResolveId id, VpnDnsR
         }
     }
 
-    conn->upstream = select_upstream(self, action, nullptr);
+    std::shared_ptr<ServerUpstream> upstream = select_upstream(self, action, nullptr);
+    conn->upstream = upstream;
     conn->addr.dst = address;
-    if (conn->upstream != nullptr) {
-        conn->server_id = conn->upstream->open_connection(&conn->addr, conn->proto, conn->app_name);
+    if (upstream != nullptr) {
+        conn->server_id = upstream->open_connection(&conn->addr, conn->proto, conn->app_name);
     }
     if (conn->server_id != NON_ID) {
         conn->state = CONNS_WAITING_RESPONSE;
@@ -1053,9 +1137,9 @@ void Tunnel::complete_connect_request(uint64_t id, std::optional<VpnConnectActio
         break;
     }
 
-    ServerUpstream *upstream =
-            select_upstream(this, action.value(), conn); // NOLINT(bugprone-unchecked-optional-access)
-    if (!is_destination_reachable(this, conn, upstream)) {
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+    std::shared_ptr<ServerUpstream> upstream = select_upstream(this, action.value(), conn);
+    if (!is_destination_reachable(this, conn, upstream.get())) {
         log_conn(this, conn, dbg, "Closing as destination is considered unreachable");
         close_client_side_connection(this, conn, AG_ENETUNREACH, true);
         return;
@@ -1078,14 +1162,14 @@ void Tunnel::complete_connect_request(uint64_t id, std::optional<VpnConnectActio
     }
 
     conn->upstream = upstream;
-    if (!this->endpoint_upstream_connected && conn->upstream == this->vpn->endpoint_upstream.get()) {
+    if (!this->endpoint_upstream_connected && upstream.get() == this->vpn->endpoint_upstream.get()) {
         log_conn(this, conn, dbg, "Rejecting connection redirected to endpoint we're not connected to");
-        conn->upstream = nullptr;
+        conn->upstream.reset();
         close_client_side_connection(this, conn, 0, true);
         return;
     }
 
-    if (conn->upstream != nullptr) {
+    if (upstream != nullptr) {
         if (conn->flags.test(CONNF_ROUTE_TO_DNS_PROXY)) {
             conn->addr.dst =
                     this->vpn->dns_proxy->get_listen_address(ipproto_to_transport_protocol(conn->proto).value());
@@ -1093,8 +1177,8 @@ void Tunnel::complete_connect_request(uint64_t id, std::optional<VpnConnectActio
                     sockaddr_to_str((sockaddr *) &conn->addr.dst));
         }
 
-        conn->flags.set(CONNF_FAKE_CONNECTION, this->fake_upstream.get() == conn->upstream);
-        conn->server_id = conn->upstream->open_connection(&conn->addr, conn->proto, conn->app_name);
+        conn->flags.set(CONNF_FAKE_CONNECTION, this->fake_upstream.get() == upstream.get());
+        conn->server_id = upstream->open_connection(&conn->addr, conn->proto, conn->app_name);
         if (conn->server_id == NON_ID) {
             log_conn(this, conn, dbg, "Upstream failed to open connection");
         }
@@ -1107,7 +1191,7 @@ void Tunnel::complete_connect_request(uint64_t id, std::optional<VpnConnectActio
         log_conn(this, conn, trace, "Connecting...");
         add_connection(this, conn);
         if (conn->flags.test(CONNF_PLAIN_DNS_CONNECTION)) {
-            if (conn->listener == this->dns_resolver.get()) {
+            if (conn->listener.lock().get() == this->dns_resolver.get()) {
                 this->plain_dns_manager->notify_library_request(conn->server_id);
             } else if (action != VPN_CA_DEFAULT) {
                 this->plain_dns_manager->notify_connect_action(conn->server_id, action.value());
@@ -1128,8 +1212,9 @@ void Tunnel::reset_connections(int uid) {
     ids.reserve(kh_size(table));
 
     vpn_connections_foreach(table, [&](VpnConnection *conn) {
-        if ((uid == -1 || conn->uid == uid) && conn->listener != this->dns_resolver.get()
-                && (conn->listener != this->plain_dns_manager.get()
+        std::shared_ptr<ClientListener> listener = conn->listener.lock();
+        if ((uid == -1 || conn->uid == uid) && listener.get() != this->dns_resolver.get()
+                && (listener.get() != this->plain_dns_manager.get()
                         || !this->plain_dns_manager->is_library_request(conn->client_id))) {
             ids.push_back(conn->client_id);
         }
@@ -1150,7 +1235,7 @@ void Tunnel::reset_connections(ClientListener *listener) {
     ids.reserve(kh_size(table));
 
     vpn_connections_foreach(table, [&](VpnConnection *conn) {
-        if (conn->listener == listener) {
+        if (conn->listener.lock().get() == listener) {
             ids.push_back(conn->client_id);
         }
     });
@@ -1201,9 +1286,11 @@ void Tunnel::on_after_endpoint_disconnect(ServerUpstream *upstream) { // NOLINT(
     }
 
     vpn_connections_foreach(this->connections.by_client_id, [upstream](VpnConnection *conn) {
-        if (conn->upstream == upstream) {
+        if (conn->upstream.lock().get() == upstream) {
             conn->flags.set(CONNF_SESSION_CLOSED);
-            conn->listener->turn_read(conn->client_id, false);
+            if (std::shared_ptr<ClientListener> listener = conn->listener.lock(); listener != nullptr) {
+                listener->turn_read(conn->client_id, false);
+            }
         }
     });
 
@@ -1268,7 +1355,7 @@ static VpnAddress tunnel_to_vpn_address(const TunnelAddress *tunnel) {
 // @note: close server-side connections with a context switch here to avoid calling server-side
 // close while we are still in its handler
 // no need to do it in `upstream_handler`, it's safe to do it on one side
-void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *data) {
+void Tunnel::listener_handler(const std::shared_ptr<ClientListener> &listener, ClientEvent what, void *data) {
     switch (what) {
     case CLIENT_EVENT_CONNECT_REQUEST: {
         const ClientConnectRequest *client_event = (ClientConnectRequest *) data;
@@ -1284,8 +1371,7 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
             }
         }
 
-        VpnConnection *conn =
-                VpnConnection::make(client_event->id, client_event_addr, client_event->protocol);
+        VpnConnection *conn = VpnConnection::make(client_event->id, client_event_addr, client_event->protocol);
         conn->listener = listener;
         conn->app_name = client_event->app_name;
         conn->flags.set(CONNF_FIRST_PACKET);
@@ -1295,12 +1381,12 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
 
         add_connection(this, conn);
 
-        if (conn->listener == this->dns_resolver.get() || conn->listener == this->plain_dns_manager.get()) {
+        if (listener.get() == this->dns_resolver.get() || listener.get() == this->plain_dns_manager.get()) {
             this->complete_connect_request(conn->client_id, std::nullopt);
             return;
         }
 
-        if (listener == this->vpn->dns_proxy_listener.get()) {
+        if (listener.get() == this->vpn->dns_proxy_listener.get()) {
             this->complete_connect_request(conn->client_id, VPN_CA_FORCE_REDIRECT);
             return;
         }
@@ -1340,13 +1426,16 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
         }
 
         conn->state = CONNS_CONNECTED;
-        conn->listener->turn_read(id, true);
-        conn->upstream->update_flow_control(conn->server_id, conn->listener->flow_control_info(conn->client_id));
+        listener->turn_read(id, true);
 
-        if (conn->listener == this->vpn->client_listener.get()
-                && conn->upstream == this->vpn->endpoint_upstream.get()) {
-            conn->flags.set(CONNF_MONITOR_STATS);
-            this->statistics_monitor->register_conn(id);
+        if (std::shared_ptr<ServerUpstream> upstream = conn->upstream.lock(); upstream != nullptr) {
+            upstream->update_flow_control(conn->server_id, listener->flow_control_info(conn->client_id));
+
+            if (listener.get() == this->vpn->client_listener.get()
+                    && conn->upstream.lock().get() == this->vpn->endpoint_upstream.get()) {
+                conn->flags.set(CONNF_MONITOR_STATS);
+                this->statistics_monitor->register_conn(id);
+            }
         }
         break;
     }
@@ -1365,26 +1454,18 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
             break;
         }
 
-        if (conn->upstream != nullptr && !check_upstream(this, conn, conn->upstream)) {
-            log_conn(this, conn, warn, "Unexpected upstream: c={} f={} e={} b={} p={}", (void *) conn->upstream,
-                    (void *) this->fake_upstream.get(), (void *) this->vpn->endpoint_upstream.get(),
-                    (void *) this->vpn->bypass_upstream.get(), (void *) this->plain_dns_manager.get());
-            destroy_connection(this, id, conn->server_id);
-            assert(0);
-            break;
-        }
-
-        if (conn->upstream == nullptr) {
+        std::shared_ptr<ServerUpstream> upstream = conn->upstream.lock();
+        if (upstream == nullptr) {
             destroy_connection(this, id, conn->server_id);
             break;
         }
 
         if (conn->state == CONNS_CONNECTED) {
-            conn->upstream->update_flow_control(conn->server_id, {});
+            upstream->update_flow_control(conn->server_id, {});
         }
 
         vpn_connection_remove(this->connections.by_client_id, id);
-        conn->upstream->close_connection(conn->server_id, true, true);
+        upstream->close_connection(conn->server_id, true, true);
 
         break;
     }
@@ -1393,8 +1474,16 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
         VpnConnection *conn = vpn_connection_get_by_id(this->connections.by_client_id, event->id);
         if (conn == nullptr) {
             log_tun(this, dbg, "Got data from client for inexistent or already closed connection: {}", event->id);
-            assert(0);
             event->result = -1;
+            assert(0);
+            break;
+        }
+
+        std::shared_ptr<ServerUpstream> upstream = conn->upstream.lock();
+        if (upstream == nullptr) {
+            log_conn(this, conn, dbg, "Upstream was deleted");
+            event->result = -1;
+            assert(0);
             break;
         }
 
@@ -1423,16 +1512,16 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
             }
             case ALUA_SHUTDOWN:
                 log_conn(this, conn, dbg, "Connection had been routed {} while should've been routed {}",
-                        (conn->upstream == this->vpn->endpoint_upstream.get()) ? "through VPN endpoint"
+                        (upstream.get() == this->vpn->endpoint_upstream.get()) ? "through VPN endpoint"
                                                                                : "directly to target host",
-                        (conn->upstream == this->vpn->endpoint_upstream.get()) ? "directly to target host"
+                        (upstream.get() == this->vpn->endpoint_upstream.get()) ? "directly to target host"
                                                                                : "through VPN endpoint");
                 conn->flags.reset(CONNF_LOOKINGUP_DOMAIN);
                 migrate_to_another_upstream = true;
                 break;
             case ALUA_BLOCK:
                 log_conn(this, conn, dbg, "Dropped QUIC connection");
-                conn->listener->turn_read(conn->client_id, false);
+                listener->turn_read(conn->client_id, false);
                 close_client_side_connection(this, conn, -1, true);
                 event->result = -1;
                 return;
@@ -1441,9 +1530,9 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
             if (migrate_to_another_upstream) {
                 if (!conn->flags.test(CONNF_FIRST_PACKET)) {
                     log_conn(this, conn, dbg, "Can't switch upstream in the middle of handshake");
-                    conn->listener->turn_read(conn->client_id, false);
-                    conn->upstream->update_flow_control(conn->server_id, {});
-                    conn->upstream->close_connection(conn->server_id, false, true);
+                    listener->turn_read(conn->client_id, false);
+                    upstream->update_flow_control(conn->server_id, {});
+                    upstream->close_connection(conn->server_id, false, true);
                     break;
                 }
 
@@ -1481,17 +1570,17 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
                 }
             }
             log_conn(this, conn, trace, "Sending {} bytes", event->length);
-            event->result = (int) conn->upstream->send(conn->server_id, event->data, event->length);
+            event->result = (int) upstream->send(conn->server_id, event->data, event->length);
             if (event->result > 0 || (size_t) event->result == event->length) {
                 conn->outgoing_bytes += event->result;
                 if (conn->flags.test(CONNF_MONITOR_STATS)) {
                     this->statistics_monitor->update_upload(conn->client_id, event->result);
                 }
-                size_t server_can_send = conn->upstream->available_to_send(conn->server_id);
+                size_t server_can_send = upstream->available_to_send(conn->server_id);
                 log_conn(this, conn, trace, "Server side can send {} bytes", server_can_send);
-                conn->listener->turn_read(conn->client_id, server_can_send > 0);
+                listener->turn_read(conn->client_id, server_can_send > 0);
             } else if (event->result == 0) {
-                conn->listener->turn_read(conn->client_id, false);
+                listener->turn_read(conn->client_id, false);
             } else if (event->result < 0) {
                 log_conn(this, conn, dbg, "Failed to send data from client");
                 // connection will be closed inside listener
@@ -1525,15 +1614,16 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
             break;
         }
 
-        if (conn->upstream == nullptr || conn->server_id == NON_ID) {
+        std::shared_ptr<ServerUpstream> upstream = conn->upstream.lock();
+        if (upstream == nullptr || conn->server_id == NON_ID) {
             // sometimes client can poll on not yet established connections
             break;
         }
 
-        conn->upstream->consume(conn->server_id, event->length);
+        upstream->consume(conn->server_id, event->length);
 
-        TcpFlowCtrlInfo info = conn->listener->flow_control_info(conn->client_id);
-        conn->upstream->update_flow_control(conn->server_id, info);
+        TcpFlowCtrlInfo info = listener->flow_control_info(conn->client_id);
+        upstream->update_flow_control(conn->server_id, info);
 
         if (event->length > 0) {
             log_conn(this, conn, trace, "{} bytes sent to client (client side can send {} bytes)", event->length,
@@ -1565,8 +1655,10 @@ void Tunnel::listener_handler(ClientListener *listener, ClientEvent what, void *
                 action = invert_action(vpn_mode_to_action(this->vpn->domain_filter.get_mode()));
                 break;
             }
-            ServerUpstream *upstream = select_upstream(this, action, nullptr);
-            upstream->on_icmp_request(*event);
+            if (std::shared_ptr<ServerUpstream> upstream = select_upstream(this, action, nullptr);
+                    upstream != nullptr) {
+                upstream->on_icmp_request(*event);
+            }
             break;
         }
         case IM_MSGS_DROP:
@@ -1586,17 +1678,17 @@ void Tunnel::on_icmp_reply_ready(void *arg, const IcmpEchoReply &reply) {
 
 static void fake_upstream_handler(void *arg, ServerEvent what, void *data) {
     auto *self = (Tunnel *) arg;
-    self->upstream_handler(self->fake_upstream.get(), what, data);
+    self->upstream_handler(self->fake_upstream, what, data);
 }
 
 static void plain_dns_upstream_handler(void *arg, ServerEvent what, void *data) {
     auto *self = (Tunnel *) arg;
-    self->upstream_handler(self->plain_dns_manager.get(), what, data);
+    self->upstream_handler(self->plain_dns_manager, what, data);
 }
 
 static void plain_dns_listener_handler(void *arg, ClientEvent what, void *data) {
     auto *self = (Tunnel *) arg;
-    self->listener_handler(self->plain_dns_manager.get(), what, data);
+    self->listener_handler(self->plain_dns_manager, what, data);
 }
 
 static void raise_statistics(Tunnel *self, const ConnectionStatistics &stats) {

@@ -813,7 +813,9 @@ VpnError Http2Upstream::do_health_check() {
         return {VPN_EC_ERROR, "Failed to send health check request"};
     }
 
-    m_health_check_info = {stream_id.value()};
+    m_health_check_info = HealthCheckInfo{
+            .stream_id = stream_id.value(),
+    };
 
     return {};
 }

@@ -104,7 +104,7 @@ static void endpoint_connector_finalizer(void *arg, TaskId task_id) {
         return;
     }
 
-    self->tunnel->upstream_handler(self->endpoint_upstream.get(), SERVER_EVENT_SESSION_OPENED, nullptr);
+    self->tunnel->upstream_handler(self->endpoint_upstream, SERVER_EVENT_SESSION_OPENED, nullptr);
     self->fsm.perform_transition(vpn_client::E_SESSION_OPENED, nullptr);
 
     // reconnect or `listen` was called before connection procedure completion
@@ -152,7 +152,7 @@ static void vpn_upstream_handler(void *arg, ServerEvent what, void *data) {
         vpn->tunnel->on_before_endpoint_disconnect(vpn->endpoint_upstream.get());
     }
 
-    vpn->tunnel->upstream_handler(vpn->endpoint_upstream.get(), what, data);
+    vpn->tunnel->upstream_handler(vpn->endpoint_upstream, what, data);
 
     switch (what) {
     case SERVER_EVENT_SESSION_OPENED: {
@@ -209,17 +209,17 @@ static void direct_upstream_handler(void *arg, ServerEvent what, void *data) {
         vpn->bypass_upstream_session_opened = false;
     }
 
-    vpn->tunnel->upstream_handler(vpn->bypass_upstream.get(), what, data);
+    vpn->tunnel->upstream_handler(vpn->bypass_upstream, what, data);
 }
 
 static void listener_handler(void *arg, ClientEvent what, void *data) {
     auto *vpn = (VpnClient *) arg;
-    vpn->tunnel->listener_handler(vpn->client_listener.get(), what, data);
+    vpn->tunnel->listener_handler(vpn->client_listener, what, data);
 }
 
 static void dns_proxy_listener_handler(void *arg, ClientEvent what, void *data) {
     auto *vpn = (VpnClient *) arg;
-    vpn->tunnel->listener_handler(vpn->dns_proxy_listener.get(), what, data);
+    vpn->tunnel->listener_handler(vpn->dns_proxy_listener, what, data);
 }
 
 static void dns_resolver_handler(void *arg, VpnDnsResolveId, VpnDnsResolverResult result) {
@@ -511,11 +511,6 @@ void VpnClient::disconnect() {
 void VpnClient::finalize_disconnect() {
     log_client(this, dbg, "...");
 
-    if (this->client_listener != nullptr) {
-        this->client_listener->deinit();
-        this->client_listener = nullptr;
-    }
-
     if (this->dns_proxy != nullptr) {
         this->dns_proxy->stop();
         this->dns_proxy = nullptr;
@@ -534,6 +529,11 @@ void VpnClient::finalize_disconnect() {
     if (this->bypass_upstream != nullptr) {
         this->bypass_upstream->close_session();
         this->bypass_upstream_session_opened = false;
+    }
+
+    if (this->client_listener != nullptr) {
+        this->client_listener->deinit();
+        this->client_listener = nullptr;
     }
 
     if (this->tunnel != nullptr) {

@@ -155,9 +155,9 @@ public:
     DeclPtr<VpnNetworkManager, &vpn_network_manager_destroy> network_manager{vpn_network_manager_get()};
     sockaddr_storage src = sockaddr_from_str("1.1.1.1:42");
     TunnelAddress dst = sockaddr_from_str("2.2.2.2:53");
-    TestUpstream *redirect_upstream = nullptr;
-    TestUpstream *bypass_upstream = nullptr;
-    TestListener *client_listener = nullptr;
+    std::shared_ptr<TestUpstream> redirect_upstream;
+    std::shared_ptr<TestUpstream> bypass_upstream;
+    std::shared_ptr<TestListener> client_listener;
     uint64_t client_id = vpn.listener_conn_id_generator.get();
     static inline std::optional<vpn_client::Event>
             g_last_raised_vpn_event; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
@@ -191,16 +191,16 @@ public:
         vpn.parameters.handler = {&vpn_handler, this};
         vpn.parameters.network_manager = network_manager.get();
 
-        vpn.endpoint_upstream = std::make_unique<TestUpstream>();
-        ASSERT_TRUE(vpn.endpoint_upstream->init(&vpn, {&redirect_upstream_handler, this}));
-        redirect_upstream = (TestUpstream *) vpn.endpoint_upstream.get();
-        vpn.bypass_upstream = std::make_unique<TestUpstream>();
-        ASSERT_TRUE(vpn.bypass_upstream->init(&vpn, {&bypass_upstream_handler, this}));
-        bypass_upstream = (TestUpstream *) vpn.bypass_upstream.get();
+        redirect_upstream = std::make_unique<TestUpstream>();
+        ASSERT_TRUE(redirect_upstream->init(&vpn, {&redirect_upstream_handler, this}));
+        vpn.endpoint_upstream = redirect_upstream;
+        bypass_upstream = std::make_unique<TestUpstream>();
+        ASSERT_TRUE(bypass_upstream->init(&vpn, {&bypass_upstream_handler, this}));
+        vpn.bypass_upstream = bypass_upstream;
 
-        vpn.client_listener = std::make_unique<TestListener>();
-        ASSERT_EQ(ClientListener::InitResult::SUCCESS, vpn.client_listener->init(&vpn, {&listener_handler, this}));
-        client_listener = (TestListener *) vpn.client_listener.get();
+        client_listener = std::make_unique<TestListener>();
+        ASSERT_EQ(ClientListener::InitResult::SUCCESS, client_listener->init(&vpn, {&listener_handler, this}));
+        vpn.client_listener = client_listener;
 
         ASSERT_TRUE(tun.init(&vpn));
         tun.upstream_handler(redirect_upstream, SERVER_EVENT_SESSION_OPENED, nullptr);
@@ -367,18 +367,18 @@ public:
         vpn.parameters.handler = {&vpn_handler, this};
         vpn.parameters.network_manager = network_manager.get();
         
-        vpn.endpoint_upstream = std::make_unique<TestUpstream>();
-        ASSERT_TRUE(vpn.endpoint_upstream->init(&vpn, {&redirect_upstream_handler, this}));
-        redirect_upstream = (TestUpstream *) vpn.endpoint_upstream.get();
-        vpn.bypass_upstream = std::make_unique<TestUpstream>();
-        ASSERT_TRUE(vpn.bypass_upstream->init(&vpn, {&bypass_upstream_handler, this}));
-        bypass_upstream = (TestUpstream *) vpn.bypass_upstream.get();
+        redirect_upstream = std::make_unique<TestUpstream>();
+        ASSERT_TRUE(redirect_upstream->init(&vpn, {&redirect_upstream_handler, this}));
+        vpn.endpoint_upstream = redirect_upstream;
+        bypass_upstream = std::make_unique<TestUpstream>();
+        ASSERT_TRUE(bypass_upstream->init(&vpn, {&bypass_upstream_handler, this}));
+        vpn.bypass_upstream = bypass_upstream;
     }
     
     void open_connection(VpnConnectAction callback_action, VpnConnectAction expected_action) {
-        vpn.client_listener = std::make_unique<TestListener>();
-        ASSERT_EQ(ClientListener::InitResult::SUCCESS, vpn.client_listener->init(&vpn, {&listener_handler, this}));
-        client_listener = (TestListener *) vpn.client_listener.get();
+        client_listener = std::make_unique<TestListener>();
+        ASSERT_EQ(ClientListener::InitResult::SUCCESS, client_listener->init(&vpn, {&listener_handler, this}));
+        vpn.client_listener = client_listener;
         
         ASSERT_TRUE(tun.init(&vpn));
         tun.upstream_handler(redirect_upstream, SERVER_EVENT_SESSION_OPENED, nullptr);
