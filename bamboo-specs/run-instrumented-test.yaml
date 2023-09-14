@@ -20,6 +20,11 @@ Run Instrumented test:
         force-clean-build: 'true'
         description: Checkout client
     - checkout:
+        repository: core-libs/vpn-libs
+        path: test/network-load-simulator/vpn-libs
+        force-clean-build: 'true'
+        description: Checkout client into "network-load-simulator"
+    - checkout:
         repository: core-libs/vpn-libs-endpoint
         path: test/endpoint/vpn-libs-endpoint
         force-clean-build: 'true'
@@ -86,8 +91,10 @@ repositories:
   - core-libs/vpn-libs-endpoint:
       scope: global
 branches:
-  create: manually
-  delete: never
+  create: for-pull-request
+  delete:
+    after-deleted-days: 4
+    after-inactive-days: 30
   link-to-jira: true
 notifications: [ ]
 labels: [ ]
