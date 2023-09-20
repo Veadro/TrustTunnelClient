@@ -168,6 +168,7 @@ run_browser_test() {
     run_endpoint
     run_client_with_browser $protocol
     docker exec -w /test "$CLIENT_WITH_BROWSER_CONTAINER" node index.js || RESULT=1
+    docker exec "$CLIENT_WITH_BROWSER_CONTAINER" chmod -R 777 /output/
     docker cp $CLIENT_WITH_BROWSER_CONTAINER:/test/output.json ./output.json
     docker stop "$ENDPOINT_CONTAINER"
     docker stop "$CLIENT_WITH_BROWSER_CONTAINER"

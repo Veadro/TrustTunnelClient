@@ -4,7 +4,7 @@ const consola = require('consola');
 const { exit } = require('process');
 
 // Check environment variables
-const URLs = (process.env.URLs || 'https://bbc.com,https://cnn.com,https://nytimes.com,https://theguardian.com').split(',');
+const URLs = (process.env.URLs || 'https://www.google.com,https://www.cloudflare.com').split(',');
 const TIME_LIMIT = process.env.TIME_LIMIT || '30s';
 const VERBOSE = process.env.VERBOSE === 'true';
 const OUTPUT_FILE = process.env.OUTPUT_FILE || 'output.json';

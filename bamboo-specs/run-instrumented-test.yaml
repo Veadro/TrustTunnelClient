@@ -14,6 +14,16 @@ Run Instrumented test:
   key: JOB1
   description: Runs Instrumented tests
   tasks:
+    - script:
+        interpreter: SHELL
+        scripts:
+          - |-
+            #!/bin/bash
+
+            set -x -e
+
+            exec docker run --rm --volume ${bamboo.working.directory}:${bamboo.working.directory} adguard/core-libs:1.16 /bin/sh -c 'rm -rf ${bamboo.working.directory}/*'
+        description: Clean working directory with root privileges
     - checkout:
         repository: core-libs/vpn-libs
         path: test/client/vpn-libs
