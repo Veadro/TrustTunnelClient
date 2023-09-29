@@ -2,9 +2,9 @@
 
 #ifndef _WIN32
 #include <net/if.h>
-#include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <sys/socket.h>
 #endif
 
 #include <atomic>
@@ -118,10 +118,10 @@ struct Ping {
     VpnEventLoop *loop;
     PingHandler handler;
 
-    std::list<PingConn> pending; // Waiting to start connection.
+    std::list<PingConn> pending;    // Waiting to start connection.
     std::list<PingConn> inprogress; // Connection started.
-    std::list<PingConn> done; // Ready for next round.
-    std::list<PingConn> report; // Ready to report.
+    std::list<PingConn> done;       // Ready for next round.
+    std::list<PingConn> report;     // Ready to report.
 
     DeclPtr<event, &event_free> timer;
 
@@ -136,6 +136,7 @@ struct Ping {
 
     std::vector<sockaddr_storage> relay_addresses; // These are in reverse order compared to the ones in `PingInfo`.
 
+    bool have_direct_result;
     bool have_round_winner;
     bool anti_dpi;
     bool use_quic;
@@ -468,16 +469,22 @@ static void do_prepare(void *arg) {
     assert(!self->pending.empty() ? (self->done.empty() && self->report.empty())
                                   : (!self->done.empty() || !self->report.empty()));
 
-    std::unordered_set<std::string> relay_snis; // Don't try to connect through a relay with the same SNI more than once
+    // Don't try to fall back to a relay if we ever received a response from at least one endpoint directly.
+    self->have_direct_result =
+            self->have_direct_result || std::any_of(self->done.begin(), self->done.end(), [](const PingConn &conn) {
+                return conn.best_result_ms.has_value() && conn.relay_address.ss_family == 0;
+            });
+    // Don't try to connect through a relay with the same SNI more than once.
+    std::unordered_set<std::string> relay_snis;
 
     for (auto conn = self->done.begin(); conn != self->done.end();) {
         if (conn->socket_error && conn->rounds_done == 0) {
-            if (conn->use_quic) { // Fallback from QUIC to TLS
+            if (conn->use_quic) { // Fall back from QUIC to TLS
                 conn->use_quic = false;
                 conn->hello.clear();
-            } else if (std::string sni; !self->relay_addresses.empty()
+            } else if (std::string sni; !self->have_direct_result && !self->relay_addresses.empty()
                        && !relay_snis.contains((sni = conn->endpoint->name))) { // NOLINT(*-assignment-in-if-condition)
-                // Fallback to the next relay address
+                // Fall back to the next relay address
                 conn->relay_address = self->relay_addresses.back();
                 relay_snis.emplace(std::move(sni));
                 // Restore QUIC after falling back to relay
