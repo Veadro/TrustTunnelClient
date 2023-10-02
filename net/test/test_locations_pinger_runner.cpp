@@ -426,12 +426,13 @@ TEST_F(LocationsPingerRunnerTest, QuicToTlsFallbackAndRelayAddresses) {
 }
 
 TEST_F(LocationsPingerRunnerTest, NoRelayIfAnyAccessibleWithoutRelayQuic) {
-    // At the time of writing, Quad9 doesn't respond to QUIC
     std::vector<VpnEndpoint> endpoints = {
             // Blackhole addresses
             {sockaddr_from_str("94.140.14.200:443"), "one.one.one.one"},
             {sockaddr_from_str("[2a10:50c0::42]:443"), "one.one.one.one"},
             {sockaddr_from_str("[2a10:50c0::43]:443"), "one.one.one.one"},
+            // Immediately fails
+            {sockaddr_from_str("[fe80::]:443"), "dns.quad9.net"},
             // Working endpoint
             {sockaddr_from_str("1.1.1.1:443"), "one.one.one.one"},
     };
@@ -475,7 +476,7 @@ TEST_F(LocationsPingerRunnerTest, NoRelayIfAnyAccessibleWithoutRelayQuic) {
     });
     t1.join();
     ASSERT_EQ(1, ctx.count);
-    ASSERT_TRUE(vpn_endpoint_equals(ctx.endpoint.get(), &endpoints[3]));
+    ASSERT_TRUE(vpn_endpoint_equals(ctx.endpoint.get(), &endpoints[4]));
     ASSERT_TRUE(ctx.relay_address.empty());
 }
 
@@ -486,6 +487,8 @@ TEST_F(LocationsPingerRunnerTest, NoRelayIfAnyAccessibleWithoutRelay) {
             {sockaddr_from_str("94.140.14.200:443"), "dns.quad9.net"},
             {sockaddr_from_str("[2a10:50c0::42]:443"), "dns.quad9.net"},
             {sockaddr_from_str("[2a10:50c0::43]:443"), "dns.quad9.net"},
+            // Immediately fails
+            {sockaddr_from_str("[fe80::]:443"), "dns.quad9.net"},
             // Working endpoint
             {sockaddr_from_str("9.9.9.9:443"), "dns.quad9.net"},
     };
@@ -529,7 +532,7 @@ TEST_F(LocationsPingerRunnerTest, NoRelayIfAnyAccessibleWithoutRelay) {
     });
     t1.join();
     ASSERT_EQ(1, ctx.count);
-    ASSERT_TRUE(vpn_endpoint_equals(ctx.endpoint.get(), &endpoints[3]));
+    ASSERT_TRUE(vpn_endpoint_equals(ctx.endpoint.get(), &endpoints[4]));
     ASSERT_TRUE(ctx.relay_address.empty());
 }
 
@@ -587,6 +590,7 @@ TEST_F(LocationsPingerRunnerTest, DISABLED_Live) {
 
     struct Result {
         std::string id;
+        std::string name;
         std::string address;
         std::string relay;
         int ms;
@@ -612,13 +616,14 @@ TEST_F(LocationsPingerRunnerTest, DISABLED_Live) {
                                 ++ctx->num;
                                 if (result->ping_ms < 0) {
                                     ++ctx->num_errs;
-                                    ctx->results.emplace_back(Result{result->id, "error", "error", result->ping_ms});
+                                    ctx->results.emplace_back(
+                                            Result{result->id, "error", "error", "error", result->ping_ms});
                                     return;
                                 }
                                 ctx->avg += (result->ping_ms - ctx->avg) / ctx->num;
                                 ctx->min = std::min(ctx->min, result->ping_ms);
                                 ctx->max = std::max(ctx->max, result->ping_ms);
-                                ctx->results.emplace_back(Result{result->id,
+                                ctx->results.emplace_back(Result{result->id, result->endpoint->name,
                                         sockaddr_to_str((sockaddr *) &result->endpoint->address),
                                         result->relay_address ? sockaddr_to_str(result->relay_address) : "none",
                                         result->ping_ms});
@@ -633,7 +638,7 @@ TEST_F(LocationsPingerRunnerTest, DISABLED_Live) {
     });
 
     for (auto &res : ctx.results) {
-        fmt::print("{:46} {:46} {:46} {} ms\n", res.id, res.address, res.relay, res.ms);
+        fmt::print("{:46} {:46} {:46} {:4} ms  {}\n", res.id, res.address, res.relay, res.ms, res.name);
     }
     fmt::print("min: {} ms, avg: {} ms, max: {} ms, errors: {}, endpoints: {}, locations: {}\n", ctx.min, ctx.avg,
             ctx.max, ctx.num_errs, total_endpoints, locations.size());

@@ -148,11 +148,9 @@ static void finalize_location(LocationsPinger *pinger, const FinalizeLocationInf
         if (selected->relay_address.ss_family) {
             result.relay_address = (sockaddr *) &selected->relay_address;
         }
-        log_location(pinger, location->info->id, dbg, "Selected endpoint: {} ({}{}) ({}ms)", result.endpoint->name,
-                result.relay_address ? "through relay " : "",
-                result.relay_address ? sockaddr_to_str(result.relay_address)
-                                     : sockaddr_to_str((sockaddr *) &result.endpoint->address),
-                result.ping_ms);
+        log_location(pinger, location->info->id, dbg, "Selected endpoint: {} ({}){}{} ({} ms)", result.endpoint->name,
+                sockaddr_to_str((sockaddr *) &result.endpoint->address), result.relay_address ? " through relay " : "",
+                result.relay_address ? sockaddr_to_str(result.relay_address) : "", result.ping_ms);
     } else {
         log_location(pinger, location->info->id, dbg, "None of the endpoints has been pinged successfully");
         result.ping_ms = -1;
@@ -233,9 +231,9 @@ static void start_location_ping(LocationsPinger *pinger) {
     auto i = pinger->pending_locations.begin();
 
     log_location(pinger, i->info->id, dbg, "Starting location ping");
-    PingInfo ping_info = {pinger->loop, {i->info->endpoints.data, i->info->endpoints.size}, pinger->timeout_ms,
-            {pinger->interfaces.data(), pinger->interfaces.size()}, pinger->rounds, pinger->use_quic, pinger->anti_dpi,
-            {i->info->relay_addresses.data, i->info->relay_addresses.size}};
+    PingInfo ping_info = {i->info->id, pinger->loop, {i->info->endpoints.data, i->info->endpoints.size},
+            pinger->timeout_ms, {pinger->interfaces.data(), pinger->interfaces.size()}, pinger->rounds,
+            pinger->use_quic, pinger->anti_dpi, {i->info->relay_addresses.data, i->info->relay_addresses.size}};
     Ping *ping = ping_start(&ping_info, {ping_handler, pinger});
     pinger->locations.emplace(ping, std::move(*i));
     pinger->pending_locations.pop_front();

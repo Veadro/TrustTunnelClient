@@ -37,14 +37,12 @@ static ag::Logger g_logger{"PING"}; // NOLINT(cert-err58-cpp,cppcoreguidelines-a
 
 #define log_ping(ping_, lvl_, fmt_, ...) lvl_##log(g_logger, "[{}] " fmt_, (ping_)->id, ##__VA_ARGS__)
 #define log_conn(ping_, conn_, lvl_, fmt_, ...)                                                                        \
-    log_ping(ping_, lvl_, "Round {}: {}{} ({}{}) via {}: " fmt_, (ping_)->rounds_started,                              \
+    log_ping(ping_, lvl_, "Round {}: {}{} ({}){}{} via {}: " fmt_, (ping_)->rounds_started,                            \
             (conn_)->use_quic ? "udp://" : "tcp://", (conn_)->endpoint->name,                                          \
-            (conn_)->relay_address.ss_family ? "through relay " : "",                                                  \
-            (conn_)->relay_address.ss_family ? sockaddr_to_str((sockaddr *) &(conn_)->relay_address)                   \
-                                             : sockaddr_to_str((sockaddr *) &(conn_)->endpoint->address),              \
+            sockaddr_to_str((sockaddr *) &(conn_)->endpoint->address),                                                 \
+            (conn_)->relay_address.ss_family ? " through relay " : "",                                                 \
+            (conn_)->relay_address.ss_family ? sockaddr_to_str((sockaddr *) &(conn_)->relay_address) : "",             \
             (conn_)->bound_if_name, ##__VA_ARGS__)
-
-static std::atomic_int g_next_id; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 using PingClock = std::chrono::high_resolution_clock;
 using std::chrono::duration_cast;
@@ -114,7 +112,7 @@ struct PingConn {
 };
 
 struct Ping {
-    int id = g_next_id.fetch_add(1, std::memory_order_relaxed);
+    std::string id;
 
     VpnEventLoop *loop;
     PingHandler handler;
@@ -263,7 +261,7 @@ static void on_event(evutil_socket_t fd, short, void *arg) {
             goto end_round;
         }
 
-        log_conn(self, conn, trace, "Got response");
+        log_conn(self, conn, dbg, "Got response");
 
         conn->best_result_ms = std::min(dt_ms, conn->best_result_ms.value_or(INT_MAX));
 
@@ -362,7 +360,7 @@ static void do_connect(void *arg) {
     auto conn = self->pending.begin();
     assert(conn->fd.valid());
 
-    log_conn(self, conn, trace, "Connecting");
+    log_conn(self, conn, dbg, "Connecting");
     conn->started_at = PingClock::now();
     conn->socket_error = conn->use_quic ? send_quic_initial(*conn) : xconnect(*conn);
     if (conn->socket_error != 0) {
@@ -637,7 +635,7 @@ static void do_prepare(void *arg) {
 
 Ping *ping_start(const PingInfo *info, PingHandler handler) {
     DeclPtr<Ping, &ping_destroy> self{new Ping{}};
-    log_ping(self, trace, "...");
+    log_ping(self, trace, "");
 
     if (info->loop == nullptr) {
         log_ping(self, warn, "Invalid settings");
@@ -648,6 +646,9 @@ Ping *ping_start(const PingInfo *info, PingHandler handler) {
         return nullptr;
     }
 
+    static std::atomic_int next_id{0};
+
+    self->id = info->id ? std::string{info->id} : AG_FMT("{}", next_id++);
     self->loop = info->loop;
     self->handler = handler;
     self->anti_dpi = info->anti_dpi;
@@ -714,7 +715,6 @@ Ping *ping_start(const PingInfo *info, PingHandler handler) {
                 });
     }
 
-    log_ping(self, trace, "Done");
     return self.release();
 }
 
@@ -723,8 +723,8 @@ void ping_destroy(Ping *ping) {
     delete ping;
 }
 
-int ping_get_id(const Ping *ping) {
-    return ping->id;
+const char *ping_get_id(const Ping *ping) {
+    return ping->id.c_str();
 }
 
 std::vector<uint8_t> prepare_quic_initial(const char *sni) {

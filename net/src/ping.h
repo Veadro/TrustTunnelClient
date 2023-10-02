@@ -26,6 +26,8 @@ struct PingResult {
 };
 
 struct PingInfo {
+    const char *id; ///< An ID string for correlating log messages
+
     VpnEventLoop *loop = nullptr;           ///< Event loop
     std::span<const VpnEndpoint> endpoints; ///< List of endpoints to ping
 
@@ -69,6 +71,6 @@ void ping_destroy(Ping *ping);
 /**
  * Return the id of the specified ping.
  */
-int ping_get_id(const Ping *ping);
+const char *ping_get_id(const Ping *ping);
 
 } // namespace ag
