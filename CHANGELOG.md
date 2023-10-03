@@ -1,5 +1,7 @@
 # CHANGELOG
 
+## 0.92.115
+
 * Added a new `VpnConnectAction`: `VPN_CA_REJECT`. 
 
 ## 0.92.107
