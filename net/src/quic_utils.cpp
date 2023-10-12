@@ -50,30 +50,6 @@ static constexpr QuicInitialSalt QUIC_INITIAL_SALTS[] = {
         },
 };
 
-static bool hkdf_extract(
-        uint8_t *dest, const uint8_t *secret, size_t secret_len, const uint8_t *salt, size_t salt_len) {
-    // SHA256 is used for QUIC [rfc 9001 5.2]
-    const EVP_MD *prf = EVP_sha256();
-    size_t dest_len = EVP_MD_size(prf);
-
-    return HKDF_extract(dest, &dest_len, prf, secret, secret_len, salt, salt_len) == 1;
-}
-
-static bool hkdf_expand_label(uint8_t *dest, size_t dest_len, const uint8_t *secret, std::string_view label) {
-    std::string full_label = std::string("tls13 ") + label.data();
-    std::basic_string<uint8_t> info;
-    // 2 first bytes store out key length
-    info.push_back((uint8_t) (dest_len >> CHAR_BIT));
-    info.push_back((uint8_t) dest_len);
-    // 3rd byte stores label length
-    info.push_back((uint8_t) full_label.size());
-    info.append((uint8_t *) full_label.c_str());
-    // info_len field in HFDF_expand has to account null-terminating byte (that's why info.size() + 1)
-    const EVP_MD *prf = EVP_sha256();
-    return HKDF_expand(dest, dest_len, prf, secret, QUIC_INITIAL_SECRETLEN, (uint8_t *) info.c_str(), info.size() + 1)
-            == 1;
-}
-
 static bool create_hp_mask(uint8_t *hp_mask, const uint8_t *key, const uint8_t *sample) {
     AES_KEY aes_key{};
     static const size_t AES_KEY_SIZE = 128;
@@ -126,30 +102,30 @@ std::optional<std::vector<uint8_t>> quic_utils::decrypt_initial(
     // the secrets for protecting client packets
     std::array<uint8_t, QUIC_INITIAL_SECRETLEN> initial_secret_buf{};
 
-    if (!hkdf_extract(initial_secret_buf.data(), hd.dcid.data(), hd.dcid_len, initial_salt_it->salt.data(),
-                initial_salt_it->salt.size())) {
+    if (!tls13_utils::hkdf_extract(initial_secret_buf, std::span{hd.dcid.data(), hd.dcid_len},
+                initial_salt_it->salt)) {
         return std::nullopt;
     }
 
     // Extract client secret to get key, iv and hp afterwards
     std::array<uint8_t, QUIC_INITIAL_SECRETLEN> client_secret{};
 
-    if (!hkdf_expand_label(client_secret.data(), QUIC_INITIAL_SECRETLEN, initial_secret_buf.data(), "client in")) {
+    if (!tls13_utils::hkdf_expand_label(client_secret, initial_secret_buf, "client in")) {
         return std::nullopt;
     }
     // Extract key for payload decryption
     std::array<uint8_t, QUIC_INITIAL_KEYLEN> payload_key{};
-    if (!hkdf_expand_label(payload_key.data(), QUIC_INITIAL_KEYLEN, client_secret.data(), "quic key")) {
+    if (!tls13_utils::hkdf_expand_label(payload_key, client_secret, "quic key")) {
         return std::nullopt;
     }
     // Extract initialization vector for getting nonce for payload decryption
     std::array<uint8_t, QUIC_INITIAL_IVLEN> payload_iv{};
-    if (!hkdf_expand_label(payload_iv.data(), QUIC_INITIAL_IVLEN, client_secret.data(), "quic iv")) {
+    if (!tls13_utils::hkdf_expand_label(payload_iv, client_secret, "quic iv")) {
         return std::nullopt;
     }
     // Extract header protection data
     std::array<uint8_t, QUIC_INITIAL_KEYLEN> hp_key{};
-    if (!hkdf_expand_label(hp_key.data(), QUIC_INITIAL_KEYLEN, client_secret.data(), "quic hp")) {
+    if (!tls13_utils::hkdf_expand_label(hp_key, client_secret, "quic hp")) {
         return std::nullopt;
     }
     // Parse token length offset

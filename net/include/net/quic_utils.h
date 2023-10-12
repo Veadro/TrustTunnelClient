@@ -6,6 +6,8 @@
 #include <optional>
 #include <vector>
 
+#include "net/tls13_utils.h"
+
 namespace ag::quic_utils {
 
 /// maximum length of a connection ID

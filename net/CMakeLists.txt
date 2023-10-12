@@ -35,6 +35,7 @@ set(SOURCE_FILES
         ${NET_SOURCE_DIR}/dns_utils.cpp
         ${NET_SOURCE_DIR}/quic_utils.cpp
         ${NET_SOURCE_DIR}/os_tunnel.cpp
+        ${NET_SOURCE_DIR}/tls13_utils.cpp
     )
 
 string(TOLOWER "${CMAKE_OSX_SYSROOT}" OSX_SYSROOT_LC)
