@@ -112,6 +112,10 @@ repositories:
 triggers:
   - cron:
       expression: 0 0 9 ? * *
+branches:
+  create: manually
+  delete: never
+  link-to-jira: true
 notifications:
   - events:
       - plan-failed
