@@ -6,7 +6,18 @@
 
 #include "common/cache.h"
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#define NOCRYPT
+#include <netioapi.h>
+#else
+#include <net/if.h>
+#endif
+
 namespace ag {
+
+static Logger g_logger{"NETWORK_MANAGER"};
 
 static struct NetworkManagerHolder {
     VpnNetworkManager manager = {
@@ -59,6 +70,9 @@ bool vpn_network_manager_check_app_request_domain(const char *domain) {
 }
 
 void vpn_network_manager_set_outbound_interface(uint32_t idx) {
+    char buf[IF_NAMESIZE + 1];
+    char *name = if_indextoname(idx, buf);
+    dbglog(g_logger, "Interface name {} with index {}", name ? name : "(unknown)", idx);
     g_network_manager_holder.outbound_interface = idx;
 }
 

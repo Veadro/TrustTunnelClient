@@ -394,7 +394,6 @@ static int set_outbound_interface() {
     uint32_t if_index = 0;
     if (!config.bound_if.empty()) {
         if_index = if_nametoindex(config.bound_if.c_str());
-        dbglog(g_logger, "Interface name {} with index {}", config.bound_if, if_index);
         if (if_index == 0) {
             errlog(g_logger, "Unknown interface name, use 'ifconfig' to see possible values");
             return -1;
