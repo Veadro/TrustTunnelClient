@@ -216,8 +216,9 @@ static inline size_t varint_len(uint64_t varint_value) {
 
 /**
  * Check if the specified IPv4 address is a private address as defined by RFC 1918
+ * and link-local address as defined by RFC 3927
  */
-bool is_private_ipv4_address(const in_addr *ip_ptr);
+bool is_private_or_linklocal_ipv4_address(const in_addr *ip_ptr);
 
 #ifdef __MACH__
 

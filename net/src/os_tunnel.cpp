@@ -151,7 +151,7 @@ void ag::vpn_os_tunnel_settings_destroy(ag::VpnOsTunnelSettings *settings) {
 
 const ag::VpnOsTunnelSettings *ag::vpn_os_tunnel_settings_defaults() {
     static const char *included_routes[] = {"0.0.0.0/0", "2000::/3"};
-    static const char *excluded_routes[] = {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/3"};
+    static const char *excluded_routes[] = {"10.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/3"};
     static const VpnOsTunnelSettings settings{
             .ipv4_address = "172.16.219.2",
             .ipv6_address = "fd01::2",

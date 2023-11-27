@@ -328,6 +328,7 @@ static bool add_adapter_route(const ag::CidrRange &route, uint32_t tun_number, b
 
     DWORD error = CreateIpForwardEntry2(&row);
     if (error != ERROR_SUCCESS) {
+        errlog(logger, "Cannot create route {}: {} ({})", route.to_string(), ag::sys::strerror(error), error);
         SetLastError(error);
         return false;
     }
@@ -395,13 +396,23 @@ bool ag::VpnWinTunnel::setup_routes() {
 
     for (auto &route : ipv4_routes) {
         if (!add_adapter_route(route, m_if_index, false)) {
-            return false;
+            auto splitted = route.split();
+            if (!splitted
+                    || !add_adapter_route(splitted->first, m_if_index, false)
+                    || !add_adapter_route(splitted->second, m_if_index, false)) {
+                return false;
+            }
         }
     }
 
     for (auto &route : ipv6_routes) {
         if (!add_adapter_route(route, m_if_index, true)) {
-            return false;
+            auto splitted = route.split();
+            if (!splitted
+                    || !add_adapter_route(splitted->first, m_if_index, false)
+                    || !add_adapter_route(splitted->second, m_if_index, false)) {
+                return false;
+            }
         }
     }
     return true;
