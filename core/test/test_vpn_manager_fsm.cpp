@@ -235,6 +235,7 @@ static void vpn_handler(void *arg, VpnEvent what, void *data) {
         case VPN_SS_DISCONNECTED:
         case VPN_SS_CONNECTING:
         case VPN_SS_RECOVERING:
+        case VPN_SS_WAITING_FOR_NETWORK:
             test->vpn_error = event.error;
             break;
         }
@@ -259,7 +260,7 @@ TEST_F(VpnManagerTest, SuccessfullConnect) {
             {sockaddr_from_str("127.0.0.2:443"), "localhost"},
             {sockaddr_from_str("127.0.0.3:443"), "localhost"},
     };
-    upstream.location = (VpnLocation){"1", {endpoints, std::size(endpoints)}};
+    upstream.location = VpnLocation{"1", {endpoints, std::size(endpoints)}};
 
     ASSERT_NO_FATAL_FAILURE(start_connect(std::size(endpoints)));
 
@@ -284,7 +285,7 @@ TEST_F(VpnManagerTest, FailOnAllConnectAttemptsUsed) {
             {sockaddr_from_str("127.0.0.2:443"), "localhost"},
             {sockaddr_from_str("127.0.0.3:443"), "localhost"},
     };
-    upstream.location = (VpnLocation){"1", {endpoints, std::size(endpoints)}};
+    upstream.location = VpnLocation{"1", {endpoints, std::size(endpoints)}};
 
     ASSERT_NO_FATAL_FAILURE(start_connect(std::size(endpoints)));
 
@@ -293,6 +294,36 @@ TEST_F(VpnManagerTest, FailOnAllConnectAttemptsUsed) {
                 ping_location(LocationsPingerResultExtra{{vpn->upstream_config->location.id, 10, &endpoint}},
                         VpnLocation{vpn->upstream_config->location.id, {endpoints, uint32_t(std::size(endpoints))}}));
         ASSERT_NO_FATAL_FAILURE(connect_client_fail(VPN_EC_ERROR, &endpoint));
+    }
+    ASSERT_TRUE(wait_state(VPN_SS_DISCONNECTED));
+    ASSERT_NO_FATAL_FAILURE(check_connect_result(VPN_EC_INITIAL_CONNECT_FAILED));
+}
+
+TEST_F(VpnManagerTest, FailOnAllConnectAttemptsUsedNetworkLost) {
+    VpnEndpoint endpoints[] = {
+        {sockaddr_from_str("127.0.0.1:443"), "localhost"},
+        {sockaddr_from_str("127.0.0.2:443"), "localhost"},
+        {sockaddr_from_str("127.0.0.3:443"), "localhost"},
+    };
+    upstream.location = VpnLocation{"1", {endpoints, std::size(endpoints)}};
+
+    ASSERT_NO_FATAL_FAILURE(start_connect(std::size(endpoints)));
+
+    for (size_t i = 0; i < std::size(endpoints); ++i) {
+        const VpnEndpoint &endpoint = endpoints[i];
+        ASSERT_NO_FATAL_FAILURE(
+                ping_location(LocationsPingerResultExtra{{vpn->upstream_config->location.id, 10, &endpoint}},
+                        VpnLocation{vpn->upstream_config->location.id, {endpoints, uint32_t(std::size(endpoints))}}));
+        vpn_notify_network_change(vpn, VPN_NS_NOT_CONNECTED);
+        if (i < std::size(endpoints) - 1) {
+            ASSERT_TRUE(wait_state(VPN_SS_WAITING_FOR_NETWORK));
+        } else {
+            ASSERT_TRUE(wait_state(VPN_SS_DISCONNECTED));
+        }
+        vpn_notify_network_change(vpn, VPN_NS_CONNECTED);
+        if (i < std::size(endpoints) - 1) {
+            ASSERT_TRUE(wait_state(VPN_SS_CONNECTING));
+        }
     }
     ASSERT_TRUE(wait_state(VPN_SS_DISCONNECTED));
     ASSERT_NO_FATAL_FAILURE(check_connect_result(VPN_EC_INITIAL_CONNECT_FAILED));
@@ -381,19 +412,16 @@ TEST_F(ConnectedVpnManagerTest, RecoveryRePingLocation) {
     } while (!recovery_reset);
 }
 
-// Check that the library does a health check on network properties update
+// Check that the library enters recovery when network is changed, but not lost
 TEST_F(ConnectedVpnManagerTest, NetworkPropertiesUpdate) {
-    vpn_notify_network_change(vpn, false);
-    ASSERT_TRUE(test_mock::g_client.wait_called(test_mock::CMID_DO_HEALTH_CHECK));
-    ASSERT_EQ(vpn->fsm.get_state(), VPN_SS_CONNECTED);
+    vpn_notify_network_change(vpn, VPN_NS_CONNECTED);
+    ASSERT_TRUE(wait_state(VPN_SS_WAITING_RECOVERY));
 }
 
-// Check that the library tries to reconnect on network loss
+// Check that the library disconnects when network is lost
 TEST_F(ConnectedVpnManagerTest, NetworkLoss) {
-    vpn_notify_network_change(vpn, true);
-    ASSERT_TRUE(wait_state(VPN_SS_RECOVERING));
-    ASSERT_NO_FATAL_FAILURE(ping_location());
-    ASSERT_NO_FATAL_FAILURE(connect_client_ok(&endpoints[0]));
+    vpn_notify_network_change(vpn, VPN_NS_NOT_CONNECTED);
+    ASSERT_TRUE(wait_state(VPN_SS_WAITING_FOR_NETWORK));
 }
 
 class AbandonEndpoint : public VpnManagerTest {

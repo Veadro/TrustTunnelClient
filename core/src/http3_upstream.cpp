@@ -271,31 +271,31 @@ uint64_t Http3Upstream::open_connection(const TunnelAddressPair *addr, int proto
 }
 
 void Http3Upstream::close_connection(uint64_t conn_id, bool graceful, bool async) {
-    if (async) {
-        m_closing_connections[conn_id] = graceful;
-        if (!m_close_connections_task_id.has_value()) {
-            m_close_connections_task_id = event_loop::submit(this->vpn->parameters.ev_loop,
-                    {
-                            .arg = this,
-                            .action =
-                                    [](void *arg, TaskId) {
-                                        auto *self = (Http3Upstream *) arg;
-                                        self->m_close_connections_task_id.release();
-                                        std::unordered_map<uint64_t, bool> connections;
-                                        std::swap(connections, self->m_closing_connections);
-                                        for (const auto &[conn_id_, graceful_] : connections) {
-                                            self->close_connection(conn_id_, graceful_, false);
-                                        }
-                                    },
-                    });
-        }
+    if (m_udp_mux.check_connection(conn_id)) {
+        m_udp_mux.close_connection(conn_id, async);
         return;
     }
 
-    if (m_udp_mux.check_connection(conn_id)) {
-        m_udp_mux.close_connection(conn_id, false);
-    } else {
+    if (!async) {
         this->close_tcp_connection(conn_id, graceful);
+    }
+
+    m_closing_connections[conn_id] = graceful;
+    if (!m_close_connections_task_id.has_value()) {
+        m_close_connections_task_id = event_loop::submit(this->vpn->parameters.ev_loop,
+                {
+                        .arg = this,
+                        .action =
+                                [](void *arg, TaskId) {
+                                    auto *self = (Http3Upstream *) arg;
+                                    self->m_close_connections_task_id.release();
+                                    std::unordered_map<uint64_t, bool> connections;
+                                    std::swap(connections, self->m_closing_connections);
+                                    for (const auto &[conn_id_, graceful_] : connections) {
+                                        self->close_tcp_connection(conn_id_, graceful_);
+                                    }
+                                },
+                });
     }
 }
 

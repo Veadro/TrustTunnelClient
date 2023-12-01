@@ -283,6 +283,11 @@ typedef enum {
      * Otherwise, returns to `VPN_SS_WAITING_RECOVERY` and waits for the next attempt.
      */
     VPN_SS_RECOVERING,
+    /**
+     * Entered after a network loss, VPN client is disconnected and waiting for network connection to appear,
+     * as indicated by a call to `vpn_notify_network_change` with `VPN_NS_CONNECTED`.
+     */
+    VPN_SS_WAITING_FOR_NETWORK,
 } VpnSessionState;
 
 typedef struct {
@@ -514,6 +519,13 @@ typedef struct {
     VpnConnectRetryInfo retry_info;
 } VpnConnectParameters;
 
+typedef enum {
+    /// An internet connection is available
+    VPN_NS_CONNECTED,
+    /// An internet connection is unavailable
+    VPN_NS_NOT_CONNECTED,
+} VpnNetworkState;
+
 extern "C" {
 
 /**
@@ -616,12 +628,14 @@ WIN_EXPORT void vpn_update_exclusions(Vpn *vpn, VpnMode mode, ag::VpnStr exclusi
 WIN_EXPORT void vpn_reset_connections(Vpn *vpn, int uid);
 
 /**
- * Notify the instance of a network change.
+ * Notify the instance of a network state change.
+ * This function should be called with `VPN_NS_CONNECTED` when the active network changes
+ * but the internet is still available, and with `VPN_NS_NOT_CONNECTED` when the internet
+ * connection is lost. It should not be called if the active network isn't changed.
  * @param vpn VPN client
- * @param network_loss_suspected true if it's possible that the network through which the library
- *                               was connected to an endpoint was lost
+ * @param state the new network state
  */
-void vpn_notify_network_change(Vpn *vpn, bool network_loss_suspected);
+WIN_EXPORT void vpn_notify_network_change(Vpn *vpn, VpnNetworkState state);
 
 /**
  * Request the instance for an endpoint connection statistics.

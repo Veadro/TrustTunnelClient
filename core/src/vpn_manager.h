@@ -100,6 +100,7 @@ struct Vpn {
     /** The endpoint the client is connected or trying to connect to */
     std::optional<SelectedEndpoint> selected_endpoint;
     bool network_changed_before_recovery = false;
+    bool connected_once = false;
 
     DeclPtr<LocationsPinger, &locations_pinger_destroy> pinger;
     bool ping_failure_induces_location_unavailable = false;

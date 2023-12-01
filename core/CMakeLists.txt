@@ -156,7 +156,5 @@ add_unit_test(test_quic_connection_migration "${TEST_DIR}" "${TEST_EXTRA_INCLUDE
 add_unit_test(test_connection_statistics "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
 add_unit_test(test_http_udp_multiplexer "${TEST_DIR}" "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
 
-if(NOT WIN32)
-    add_unit_test(test_vpn_manager_fsm ${TEST_DIR} "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
-    add_unit_test(test_vpn_manager_fsm_recovery ${TEST_DIR} "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
-endif()
+add_unit_test(test_vpn_manager_fsm ${TEST_DIR} "${TEST_EXTRA_INCLUDES}" TRUE TRUE)
+add_unit_test(test_vpn_manager_fsm_recovery ${TEST_DIR} "${TEST_EXTRA_INCLUDES}" TRUE TRUE)

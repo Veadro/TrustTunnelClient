@@ -525,8 +525,8 @@ void vpn_reset_connections(Vpn *vpn, int uid) {
     log_vpn(vpn, info, "Done");
 }
 
-void vpn_notify_network_change(Vpn *vpn, bool network_loss_suspected) {
-    log_vpn(vpn, info, "Loss suspected={}", network_loss_suspected);
+void vpn_notify_network_change(Vpn *vpn, VpnNetworkState state) {
+    log_vpn(vpn, info, "state={}", magic_enum::enum_name(state));
 
     std::unique_lock l(vpn->stop_guard);
 
@@ -535,8 +535,9 @@ void vpn_notify_network_change(Vpn *vpn, bool network_loss_suspected) {
         return;
     }
 
-    vpn->submit([vpn, network_loss_suspected]() {
-        vpn->fsm.perform_transition(vpn_fsm::CE_NETWORK_CHANGE, (void *) &network_loss_suspected);
+    vpn->submit([vpn, state] {
+        vpn->network_changed_before_recovery = true;
+        vpn->fsm.perform_transition(vpn_fsm::CE_NETWORK_CHANGE, (void *) &state);
     });
 
     log_vpn(vpn, info, "Done");

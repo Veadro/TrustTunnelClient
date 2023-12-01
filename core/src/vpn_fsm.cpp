@@ -14,22 +14,22 @@ static bool is_fatal_error(const void *ctx, void *data);
 static bool need_to_ping_on_recovery(const void *ctx, void *data);
 static bool fall_into_recovery(const void *ctx, void *data);
 static bool no_connect_attempts(const void *ctx, void *data);
-static bool network_loss_suspected(const void *ctx, void *data);
+static bool network_lost(const void *ctx, void *data);
+static bool connected_once(const void *ctx, void *data);
 
 static void run_ping(void *ctx, void *data);
 static void connect_client(void *ctx, void *data);
 static void complete_connect(void *ctx, void *data);
+static void fail_connect_with_no_attempts(void *ctx, void *data);
 static void retry_connect(void *ctx, void *data);
 static void prepare_for_recovery(void *ctx, void *data);
+static void prepare_for_recovery_nc(void *ctx, void *data);
 static void reconnect_client(void *ctx, void *data);
 static void finalize_recovery(void *ctx, void *data);
 static void do_disconnect(void *ctx, void *data);
-static void on_network_change_no_loss(void *ctx, void *data);
-static void do_health_check(void *ctx, void *data);
 static void start_listening(void *ctx, void *data);
 static void on_wrong_connect_state(void *ctx, void *data);
 static void on_wrong_listen_state(void *ctx, void *data);
-static void on_network_loss(void *ctx, void *data);
 
 static void raise_state(void *ctx, void *data);
 
@@ -48,6 +48,7 @@ static constexpr FsmTransitionEntry TRANSITION_TABLE[] = {
         {VPN_SS_DISCONNECTED,     CE_CLIENT_DISCONNECTED, Fsm::ANYWAY,              Fsm::DO_NOTHING,        Fsm::SAME_TARGET_STATE,  Fsm::DO_NOTHING},
         {VPN_SS_DISCONNECTED,     CE_SHUTDOWN,            Fsm::ANYWAY,              do_disconnect,          Fsm::SAME_TARGET_STATE,  Fsm::DO_NOTHING},
         {VPN_SS_DISCONNECTED,     CE_START_LISTENING,     Fsm::ANYWAY,              on_wrong_listen_state,  Fsm::SAME_TARGET_STATE,  Fsm::DO_NOTHING},
+        {VPN_SS_DISCONNECTED,     CE_NETWORK_CHANGE,      Fsm::ANYWAY,              Fsm::DO_NOTHING,        Fsm::SAME_TARGET_STATE,  Fsm::DO_NOTHING},
 
         {VPN_SS_CONNECTING,       CE_RETRY_CONNECT,       Fsm::ANYWAY,              run_ping,               Fsm::SAME_TARGET_STATE,  Fsm::DO_NOTHING},
         {VPN_SS_CONNECTING,       CE_PING_READY,          Fsm::ANYWAY,              connect_client,         Fsm::SAME_TARGET_STATE,  Fsm::DO_NOTHING},
@@ -62,13 +63,17 @@ static constexpr FsmTransitionEntry TRANSITION_TABLE[] = {
         {VPN_SS_CONNECTING,       CE_CLIENT_DISCONNECTED, Fsm::OTHERWISE,           retry_connect,          Fsm::SAME_TARGET_STATE,  Fsm::DO_NOTHING},
         {VPN_SS_CONNECTING,       CE_ABANDON_ENDPOINT,    is_fatal_error,           complete_connect,       VPN_SS_DISCONNECTED,     raise_state},
         {VPN_SS_CONNECTING,       CE_ABANDON_ENDPOINT,    Fsm::OTHERWISE,           retry_connect,          Fsm::SAME_TARGET_STATE,  Fsm::DO_NOTHING},
+        {VPN_SS_CONNECTING,       CE_NETWORK_CHANGE,      no_connect_attempts,      fail_connect_with_no_attempts, VPN_SS_DISCONNECTED, raise_state},
+        {VPN_SS_CONNECTING,       CE_NETWORK_CHANGE,      network_lost,             do_disconnect,          VPN_SS_WAITING_FOR_NETWORK, raise_state},
+        {VPN_SS_CONNECTING,       CE_NETWORK_CHANGE,      fall_into_recovery,       prepare_for_recovery,   VPN_SS_WAITING_RECOVERY, raise_state},
+        {VPN_SS_CONNECTING,       CE_NETWORK_CHANGE,      Fsm::OTHERWISE,           retry_connect,          Fsm::SAME_TARGET_STATE,  Fsm::DO_NOTHING},
 
-        {VPN_SS_CONNECTED,        CE_NETWORK_CHANGE,      network_loss_suspected,   on_network_loss,        VPN_SS_RECOVERING,       raise_state},
-        {VPN_SS_CONNECTED,        CE_NETWORK_CHANGE,      Fsm::OTHERWISE,           on_network_change_no_loss, Fsm::SAME_TARGET_STATE, Fsm::DO_NOTHING},
+        {VPN_SS_CONNECTED,        CE_NETWORK_CHANGE,      network_lost,             do_disconnect,           VPN_SS_WAITING_FOR_NETWORK, raise_state},
+        {VPN_SS_CONNECTED,        CE_NETWORK_CHANGE,      Fsm::OTHERWISE,           prepare_for_recovery_nc, VPN_SS_WAITING_RECOVERY,    raise_state},
         {VPN_SS_CONNECTED,        CE_ABANDON_ENDPOINT,    is_fatal_error,           do_disconnect,          VPN_SS_DISCONNECTED,     raise_state},
         {VPN_SS_CONNECTED,        CE_ABANDON_ENDPOINT,    Fsm::OTHERWISE,           prepare_for_recovery,   VPN_SS_WAITING_RECOVERY, raise_state},
 
-        {VPN_SS_WAITING_RECOVERY, CE_NETWORK_CHANGE,      network_loss_suspected,   on_network_loss,        VPN_SS_RECOVERING,       raise_state},
+        {VPN_SS_WAITING_RECOVERY, CE_NETWORK_CHANGE,      network_lost,             do_disconnect,          VPN_SS_WAITING_FOR_NETWORK, raise_state},
         {VPN_SS_WAITING_RECOVERY, CE_NETWORK_CHANGE,      Fsm::OTHERWISE,           run_ping,               VPN_SS_RECOVERING,       raise_state},
         {VPN_SS_WAITING_RECOVERY, CE_DO_RECOVERY,         need_to_ping_on_recovery, run_ping,               VPN_SS_RECOVERING,       raise_state},
         {VPN_SS_WAITING_RECOVERY, CE_DO_RECOVERY,         Fsm::OTHERWISE,           connect_client,         VPN_SS_RECOVERING,       raise_state},
@@ -76,13 +81,19 @@ static constexpr FsmTransitionEntry TRANSITION_TABLE[] = {
         {VPN_SS_WAITING_RECOVERY, CE_CLIENT_DISCONNECTED, Fsm::OTHERWISE,           do_disconnect,          Fsm::SAME_TARGET_STATE,  Fsm::DO_NOTHING},
         {VPN_SS_WAITING_RECOVERY, CE_ABANDON_ENDPOINT,    is_fatal_error,           do_disconnect,          VPN_SS_DISCONNECTED,     raise_state},
 
-        {VPN_SS_RECOVERING,       CE_NETWORK_CHANGE,      network_loss_suspected,   on_network_loss,        Fsm::SAME_TARGET_STATE,  Fsm::DO_NOTHING},
+        {VPN_SS_RECOVERING,       CE_NETWORK_CHANGE,      network_lost,             do_disconnect,           VPN_SS_WAITING_FOR_NETWORK, raise_state},
+        {VPN_SS_RECOVERING,       CE_NETWORK_CHANGE,      Fsm::OTHERWISE,           prepare_for_recovery_nc, VPN_SS_WAITING_RECOVERY, raise_state},
         {VPN_SS_RECOVERING,       CE_PING_READY,          Fsm::ANYWAY,              reconnect_client,       Fsm::SAME_TARGET_STATE,  Fsm::DO_NOTHING},
         {VPN_SS_RECOVERING,       CE_PING_FAIL,           is_fatal_error,           do_disconnect,          VPN_SS_DISCONNECTED,     raise_state},
         {VPN_SS_RECOVERING,       CE_PING_FAIL,           Fsm::OTHERWISE,           prepare_for_recovery,   VPN_SS_WAITING_RECOVERY, raise_state},
         {VPN_SS_RECOVERING,       CE_CLIENT_READY,        Fsm::ANYWAY,              finalize_recovery,      VPN_SS_CONNECTED,        raise_state},
         {VPN_SS_RECOVERING,       CE_ABANDON_ENDPOINT,    is_fatal_error,           do_disconnect,          VPN_SS_DISCONNECTED,     raise_state},
         {VPN_SS_RECOVERING,       CE_ABANDON_ENDPOINT,    Fsm::OTHERWISE,           prepare_for_recovery,   VPN_SS_WAITING_RECOVERY, raise_state},
+
+        {VPN_SS_WAITING_FOR_NETWORK, CE_NETWORK_CHANGE,   network_lost,             Fsm::DO_NOTHING,               Fsm::SAME_TARGET_STATE,  Fsm::DO_NOTHING},
+        {VPN_SS_WAITING_FOR_NETWORK, CE_NETWORK_CHANGE,   connected_once,           prepare_for_recovery_nc,       VPN_SS_WAITING_RECOVERY, raise_state},
+        {VPN_SS_WAITING_FOR_NETWORK, CE_NETWORK_CHANGE,   no_connect_attempts,      fail_connect_with_no_attempts, VPN_SS_DISCONNECTED,     raise_state},
+        {VPN_SS_WAITING_FOR_NETWORK, CE_NETWORK_CHANGE,   Fsm::OTHERWISE,           retry_connect,                 VPN_SS_CONNECTING,       raise_state},
 
         {Fsm::ANY_SOURCE_STATE,   CE_CLIENT_DISCONNECTED, is_fatal_error,           do_disconnect,          VPN_SS_DISCONNECTED,     raise_state},
         {Fsm::ANY_SOURCE_STATE,   CE_CLIENT_DISCONNECTED, Fsm::OTHERWISE,           prepare_for_recovery,   VPN_SS_WAITING_RECOVERY, raise_state},
@@ -232,9 +243,14 @@ static bool no_connect_attempts(const void *ctx, void *) {
     return several_attempts != nullptr && several_attempts->attempts_left == 0;
 }
 
-static bool network_loss_suspected(const void *, void *data) {
-    bool network_loss_suspected = *(bool *) data;
-    return network_loss_suspected;
+static bool network_lost(const void *, void *data) {
+    auto state = *(VpnNetworkState *) data;
+    return state == VPN_NS_NOT_CONNECTED;
+}
+
+static bool connected_once(const void *ctx, void *) {
+    const auto *vpn = (Vpn *) ctx;
+    return vpn->connected_once;
 }
 
 static bool is_fatal_error(const void *ctx, void *data) {
@@ -299,6 +315,11 @@ static void complete_connect(void *ctx, void *data) {
     log_vpn(vpn, trace, "Done");
 }
 
+void fail_connect_with_no_attempts(void *ctx, void *) {
+    VpnError error = {VPN_EC_INITIAL_CONNECT_FAILED, "Number of connection attempts exceeded"};
+    complete_connect(ctx, &error);
+}
+
 static void retry_connect(void *ctx, void *) {
     Vpn *vpn = (Vpn *) ctx;
     log_vpn(vpn, trace, "...");
@@ -333,6 +354,11 @@ static void prepare_for_recovery(void *ctx, void *data) {
     log_vpn(vpn, trace, "Done");
 }
 
+void prepare_for_recovery_nc(void *ctx, void *) {
+    // `prepare_for_recovery` expects `VpnError *` as parameters, we have `VpnNetworkState *`.
+    prepare_for_recovery(ctx, nullptr);
+}
+
 static void reconnect_client(void *ctx, void *) {
     Vpn *vpn = (Vpn *) ctx;
     log_vpn(vpn, trace, "...");
@@ -362,30 +388,6 @@ static void do_disconnect(void *ctx, void *) {
     log_vpn(vpn, trace, "...");
 
     vpn->disconnect();
-
-    log_vpn(vpn, trace, "Done");
-}
-
-static void on_network_change_no_loss(void *ctx, void *arg) {
-    Vpn *vpn = (Vpn *) ctx;
-    log_vpn(vpn, trace, "...");
-    vpn->network_changed_before_recovery = true;
-    do_health_check(ctx, arg);
-}
-
-static void do_health_check(void *ctx, void *) {
-    Vpn *vpn = (Vpn *) ctx;
-    log_vpn(vpn, trace, "...");
-
-    switch (vpn->client_state) {
-    case vpn_manager::CLIS_DISCONNECTED:
-    case vpn_manager::CLIS_CONNECTING:
-        log_vpn(vpn, dbg, "Ignoring due to current client state: {}", magic_enum::enum_name(vpn->client_state));
-        break;
-    case vpn_manager::CLIS_CONNECTED:
-        vpn->client.do_health_check();
-        break;
-    }
 
     log_vpn(vpn, trace, "Done");
 }
@@ -423,16 +425,6 @@ static void on_wrong_listen_state(void *ctx, void *) {
             magic_enum::enum_name((VpnSessionState) vpn->fsm.get_state()));
 }
 
-static void on_network_loss(void *ctx, void *) {
-    Vpn *vpn = (Vpn *) ctx;
-    log_vpn(vpn, trace, "...");
-
-    vpn->disconnect_client();
-    run_ping(ctx, nullptr);
-
-    log_vpn(vpn, trace, "Done");
-}
-
 static void raise_state(void *ctx, void *) {
     Vpn *vpn = (Vpn *) ctx;
     auto state = (VpnSessionState) vpn->fsm.get_state();
@@ -448,6 +440,7 @@ static void raise_state(void *ctx, void *) {
         };
         break;
     case VPN_SS_CONNECTED:
+        vpn->connected_once = true;
         event.connected_info = {
                 .endpoint = vpn->selected_endpoint->endpoint.get(),
                 .relay_address = vpn->selected_endpoint->relay_address.has_value()
@@ -456,6 +449,7 @@ static void raise_state(void *ctx, void *) {
                 .protocol = vpn->client.endpoint_upstream->get_protocol(),
         };
         break;
+    case VPN_SS_WAITING_FOR_NETWORK:
     case VPN_SS_DISCONNECTED:
     case VPN_SS_CONNECTING:
     case VPN_SS_RECOVERING:

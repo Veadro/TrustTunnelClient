@@ -69,7 +69,7 @@ static void sighandler(int sig) {
     if (g_vpn != nullptr) {
 #ifndef _WIN32
         if (sig == SIGHUP) {
-            vpn_notify_network_change(g_vpn, true);
+            vpn_notify_network_change(g_vpn, VPN_NS_NOT_CONNECTED);
             return;
         }
 #endif
