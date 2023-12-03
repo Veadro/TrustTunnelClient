@@ -64,15 +64,13 @@ class VpnLibsConan(ConanFile):
                 patch(self, patch_file=p)
 
     def generate(self):
+        deps = CMakeDeps(self)
+        deps.generate()
         tc = CMakeToolchain(self)
-        tc.cache_variables["CMAKE_C_FLAGS"] = ""
-        tc.cache_variables["CMAKE_CXX_FLAGS"] = ""
         if self.options.sanitize:
             tc.cache_variables["CMAKE_C_FLAGS"] += f" -fno-omit-frame-pointer -fsanitize={self.options.sanitize}"
             tc.cache_variables["CMAKE_CXX_FLAGS"] += f" -fno-omit-frame-pointer -fsanitize={self.options.sanitize}"
         tc.generate()
-        deps = CMakeDeps(self)
-        deps.generate()
 
     def layout(self):
         cmake_layout(self)
