@@ -44,8 +44,6 @@ class VpnLibsConan(ConanFile):
         self.requires("cxxopts/3.1.1", transitive_headers=True)
         self.requires("tomlplusplus/3.3.0")
         self.requires("nlohmann_json/3.10.5")
-        if is_apple_os(self):
-            self.requires("ghc-filesystem/1.5.12", transitive_headers=True)
 
     def build_requirements(self):
         self.test_requires("gtest/1.14.0")
