@@ -93,7 +93,7 @@ int HttpIcmpMultiplexer::process_read_event(U8View data) {
 }
 
 bool HttpIcmpMultiplexer::send_request_established(const IcmpEchoRequest &request) {
-    uint8_t packet_buffer[ICMPPKT_REQ_SIZE];
+    uint8_t packet_buffer[ICMPPKT_REQ_SIZE]{};
     wire_utils::Writer writer({packet_buffer, sizeof(packet_buffer)});
     writer.put_u16(request.id);
     writer.put_ip_padded((sockaddr *) &request.peer);
