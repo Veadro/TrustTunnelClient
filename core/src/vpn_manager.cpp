@@ -671,8 +671,9 @@ static int ssl_verify_callback(const char *host_name, const sockaddr *host_ip, X
         return result;
     } else {
         log_vpn(vpn, err, "Failed to verify certificate");
-        SSL *ssl = (SSL *) X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
-        SSL_send_fatal_alert(ssl, SSL_AD_UNKNOWN_CA);
+        if (SSL *ssl = (SSL *) X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx())) {
+            SSL_send_fatal_alert(ssl, SSL_AD_UNKNOWN_CA);
+        }
     }
     
     X509 *cert = X509_STORE_CTX_get0_cert(ctx);
@@ -681,8 +682,9 @@ static int ssl_verify_callback(const char *host_name, const sockaddr *host_ip, X
             && (host_ip == nullptr || host_ip->sa_family == AF_UNSPEC
                     || !tls_verify_cert_ip(cert, sockaddr_to_str(host_ip).c_str()))) {
         log_vpn(vpn, err, "Server host name or IP doesn't match certificate");
-        SSL *ssl = (SSL *) X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
-        SSL_send_fatal_alert(ssl, SSL_AD_CERTIFICATE_UNKNOWN);
+        if (SSL *ssl = (SSL *) X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx())) {
+            SSL_send_fatal_alert(ssl, SSL_AD_CERTIFICATE_UNKNOWN);
+        }
         return 0;
     }
 
