@@ -29,21 +29,22 @@ class VpnLibsConan(ConanFile):
     exports_sources = patch_files
 
     def requirements(self):
+        self.requires("dns-libs/2.4.44@adguard_team/native_libs_common", transitive_headers=True)
+        self.requires("native_libs_common/5.0.3@adguard_team/native_libs_common", force=True, transitive_headers=True)
+
         self.requires("brotli/1.1.0", transitive_headers=True)
-        self.requires("dns-libs/2.4.41@adguard_team/native_libs_common", transitive_headers=True)
+        self.requires("cxxopts/3.1.1", transitive_headers=True)
         self.requires("http_parser/2.9.4", transitive_headers=True)
         self.requires("klib/2021-04-06@adguard_team/native_libs_common", transitive_headers=True)
         self.requires("ldns/2021-03-29@adguard_team/native_libs_common", transitive_headers=True)
         self.requires("libevent/2.1.11@adguard_team/native_libs_common", transitive_headers=True)
         self.requires("magic_enum/0.9.5", transitive_headers=True)
-        self.requires("native_libs_common/4.0.23@adguard_team/native_libs_common", force=True, transitive_headers=True)
         self.requires("nghttp2/1.56.0@adguard_team/native_libs_common", transitive_headers=True)
+        self.requires("nlohmann_json/3.10.5")
         self.requires("openssl/boring-2023-05-17@adguard_team/native_libs_common", transitive_headers=True)
         self.requires("quiche/0.17.1@adguard_team/native_libs_common", transitive_headers=True)
-        self.requires("zlib/1.2.11", transitive_headers=True)
-        self.requires("cxxopts/3.1.1", transitive_headers=True)
         self.requires("tomlplusplus/3.3.0")
-        self.requires("nlohmann_json/3.10.5")
+        self.requires("zlib/1.2.11", transitive_headers=True)
 
     def build_requirements(self):
         self.test_requires("gtest/1.14.0")
