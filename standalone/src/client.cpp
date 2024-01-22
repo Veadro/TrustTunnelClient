@@ -1,5 +1,4 @@
 #ifdef __APPLE__
-#include "net/mac_dns_settings_manager.h"
 #include <net/if.h>
 #include <netinet/in.h>
 #endif // __APPLE__
@@ -164,11 +163,6 @@ Error<VpnStandaloneClient::ConnectResultError> VpnStandaloneClient::dns_runner()
     if (!vpn_network_manager_update_system_dns(std::move(result.value()))) {
         return make_error(ConnectResultError{}, "Failed to update DNS servers");
     }
-#ifdef __APPLE__
-    if (std::holds_alternative<VpnStandaloneConfig::TunListener>(m_config.listener)) {
-        m_dns_manager = VpnMacDnsSettingsManager::create(AG_UNFILTERED_DNS_IPS_V4[0]);
-    }
-#endif // __APPLE__
 #endif
     return {};
 }
@@ -354,6 +348,7 @@ VpnListener *VpnStandaloneClient::make_tun_listener() {
             .included_routes = {.data = included_routes.data(), .size = uint32_t(included_routes.size())},
             .excluded_routes = {.data = excluded_routes.data(), .size = uint32_t(excluded_routes.size())},
             .mtu = int(config.mtu_size),
+            .dns_servers = defaults->dns_servers
     };
 
     m_tunnel = ag::make_vpn_tunnel();
@@ -373,14 +368,6 @@ VpnListener *VpnStandaloneClient::make_tun_listener() {
     const auto *win_defaults = vpn_win_tunnel_settings_defaults();
     win_settings.wintun_lib = m_wintun;
     win_settings.adapter_name = win_defaults->adapter_name;
-    static constexpr const char *DNS_SERVERS[] = {
-            // should be null-terminated
-            AG_UNFILTERED_DNS_IPS_V4[0].data(),
-    };
-    win_settings.dns_servers = {
-            .data = (const char **) DNS_SERVERS,
-            .size = uint32_t(std::size(DNS_SERVERS)),
-    };
     VpnError res = m_tunnel->init(&tunnel_settings, &win_settings);
 #else
     VpnError res = m_tunnel->init(&tunnel_settings);

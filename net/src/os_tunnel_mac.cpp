@@ -24,6 +24,7 @@ ag::VpnError ag::VpnMacTunnel::init(const ag::VpnOsTunnelSettings *settings) {
         return {-1, "Failed to init tunnel"};
     }
     setup_if();
+    setup_dns();
     setup_routes();
 
     return {};
@@ -106,4 +107,10 @@ void ag::VpnMacTunnel::setup_routes() {
     for (auto &route : ipv6_routes) {
         ag::tunnel_utils::fsystem("route add -inet6 {} -iface {}", route.to_string(), m_tun_name);
     }
+}
+
+[[clang::optnone]]
+void ag::VpnMacTunnel::setup_dns() {
+    std::vector<std::string_view> dns_servers{m_settings->dns_servers.data, m_settings->dns_servers.data + m_settings->dns_servers.size};
+    m_dns_manager = VpnMacDnsSettingsManager::create(dns_servers);
 }

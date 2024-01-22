@@ -335,7 +335,7 @@ static bool add_adapter_route(const ag::CidrRange &route, uint32_t if_index) {
 bool ag::VpnWinTunnel::setup_dns() {
     std::string dns_nameserver_list_v4;
     std::string dns_nameserver_list_v6;
-    ag::tunnel_utils::get_setup_dns(dns_nameserver_list_v4, dns_nameserver_list_v6, m_win_settings->dns_servers);
+    ag::tunnel_utils::get_setup_dns(dns_nameserver_list_v4, dns_nameserver_list_v6, m_settings->dns_servers);
 
     NET_LUID_LH interface_luid;
     WintunGetAdapterLUID(m_wintun_adapter, &interface_luid);
@@ -356,18 +356,10 @@ bool ag::VpnWinTunnel::setup_dns() {
     }
 
     std::vector<sockaddr_storage> dns_servers;
-    dns_servers.reserve(m_win_settings->dns_servers.size);
-    std::transform(m_win_settings->dns_servers.data,
-            m_win_settings->dns_servers.data + m_win_settings->dns_servers.size, std::back_inserter(dns_servers),
-            [](const char *str) {
-                return sockaddr_from_str(str);
-            });
-    std::vector<sockaddr *> dns_servers0;
-    dns_servers0.reserve(dns_servers.size());
-    std::transform(dns_servers.begin(), dns_servers.end(), std::back_inserter(dns_servers0),
-            [](const sockaddr_storage &address) {
-                return (sockaddr *) &address;
-            });
+    dns_servers.reserve(m_settings->dns_servers.size);
+    for (size_t i = 0; i != m_settings->dns_servers.size; i++) {
+        dns_servers.emplace_back(sockaddr_from_str(m_settings->dns_servers.data[i]));
+    }
 
     std::vector<ag::CidrRange> ipv4_routes;
     std::vector<ag::CidrRange> ipv6_routes;
@@ -379,8 +371,8 @@ bool ag::VpnWinTunnel::setup_dns() {
         return false;
     }
 
-    for (const sockaddr *dns_server : dns_servers0) {
-        ag::SocketAddress address{dns_server};
+    for (const sockaddr_storage &dns_server : dns_servers) {
+        ag::SocketAddress address{(sockaddr *) &dns_server};
         ag::CidrRange route{address.addr(), address.addr().length()};
         if (!add_adapter_route(route, m_if_index)) {
             return false;

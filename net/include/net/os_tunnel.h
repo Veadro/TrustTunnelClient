@@ -15,6 +15,10 @@
 #include <BaseTsd.h>
 #endif
 
+#ifdef __APPLE__
+#include "net/mac_dns_settings_manager.h"
+#endif
+
 #ifdef __cplusplus
 namespace ag {
 extern "C" {
@@ -33,14 +37,14 @@ struct VpnOsTunnelSettings {
     VpnAddressArray excluded_routes;
     /** MTU of the interface */
     int mtu;
+    /** DNS servers addresses */
+    VpnAddressArray dns_servers;
 };
 
 #ifdef _WIN32
 struct VpnWinTunnelSettings {
     /** Adapter name */
     const char *adapter_name;
-    /** DNS servers addresses */
-    VpnAddressArray dns_servers;
     /** Library module to handle tunnel */
     HMODULE wintun_lib;
     /** Block all inbound/outbound IPv6 traffic */
@@ -172,11 +176,15 @@ public:
 protected:
     evutil_socket_t tun_open();
     void setup_if();
+    void setup_dns();
     void setup_routes();
 
 private:
     evutil_socket_t m_tun_fd{-1};
     std::string m_tun_name{};
+#ifdef __APPLE__
+    std::unique_ptr<VpnMacDnsSettingsManager> m_dns_manager;
+#endif // __APPLE__
 };
 #endif
 

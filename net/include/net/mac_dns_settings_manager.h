@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string_view>
+#include <span>
 
 namespace ag {
 
@@ -15,11 +16,11 @@ class VpnMacDnsSettingsManager {
     VpnMacDnsSettingsManagerImplPtr m_pimpl;
     struct ConstructorAccess {};
 public:
-    VpnMacDnsSettingsManager(ConstructorAccess access, std::string_view dns_server);
+    VpnMacDnsSettingsManager(ConstructorAccess access, std::span<const std::string_view> dns_servers);
     ~VpnMacDnsSettingsManager();
 
-    static std::unique_ptr<VpnMacDnsSettingsManager> create(std::string_view dns_server) {
-        auto manager = std::make_unique<VpnMacDnsSettingsManager>(ConstructorAccess{}, dns_server);
+    static std::unique_ptr<VpnMacDnsSettingsManager> create(std::span<const std::string_view> dns_servers) {
+        auto manager = std::make_unique<VpnMacDnsSettingsManager>(ConstructorAccess{}, dns_servers);
         if (!manager->m_pimpl) {
             manager.reset();
         }

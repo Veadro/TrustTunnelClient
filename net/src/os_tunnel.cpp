@@ -129,6 +129,11 @@ ag::VpnOsTunnelSettings *ag::vpn_os_tunnel_settings_clone(const ag::VpnOsTunnelS
         dst->excluded_routes.data[i] = safe_strdup(settings->excluded_routes.data[i]);
     }
     dst->mtu = settings->mtu;
+    dst->dns_servers.size = settings->dns_servers.size;
+    dst->dns_servers.data = new const char *[settings->dns_servers.size] {};
+    for (size_t i = 0; i != dst->dns_servers.size; i++) {
+        dst->dns_servers.data[i] = safe_strdup(settings->dns_servers.data[i]);
+    }
     return dst;
 }
 
@@ -146,18 +151,24 @@ void ag::vpn_os_tunnel_settings_destroy(ag::VpnOsTunnelSettings *settings) {
         free((void *) settings->excluded_routes.data[i]);
     }
     delete[] settings->excluded_routes.data;
+    for (size_t i = 0; i != settings->dns_servers.size; i++) {
+        free((void *) settings->dns_servers.data[i]);
+    }
+    delete[] settings->dns_servers.data;
     delete settings;
 }
 
 const ag::VpnOsTunnelSettings *ag::vpn_os_tunnel_settings_defaults() {
     static const char *included_routes[] = {"0.0.0.0/0", "2000::/3"};
     static const char *excluded_routes[] = {"10.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/3"};
+    static const char *dns_servers[] = {AG_UNFILTERED_DNS_IPS_V4[0].data(), AG_UNFILTERED_DNS_IPS_V4[1].data()};
     static const VpnOsTunnelSettings settings{
             .ipv4_address = "172.16.219.2",
             .ipv6_address = "fd01::2",
             .included_routes = {.data = included_routes, .size = std::size(included_routes)},
             .excluded_routes = {.data = excluded_routes, .size = std::size(excluded_routes)},
             .mtu = 9000,
+            .dns_servers = {.data = dns_servers, .size = std::size(dns_servers)},
     };
     return &settings;
 }
@@ -165,10 +176,8 @@ const ag::VpnOsTunnelSettings *ag::vpn_os_tunnel_settings_defaults() {
 #ifdef _WIN32
 
 const ag::VpnWinTunnelSettings *ag::vpn_win_tunnel_settings_defaults() {
-    static const char *dns_server = AG_UNFILTERED_DNS_IPS_V4[0].data();
     static const ag::VpnWinTunnelSettings win_settings = {
             .adapter_name = "Adguard VpnLibs test tunnel",
-            .dns_servers = {&dns_server, 1}, // Adguard DNS unfiltered
             .wintun_lib = nullptr,
             .block_ipv6 = false,
     };
@@ -179,10 +188,6 @@ ag::VpnWinTunnelSettings *ag::vpn_win_tunnel_settings_clone(const ag::VpnWinTunn
     auto *dst = new VpnWinTunnelSettings{};
     *dst = *settings;
     dst->adapter_name = safe_strdup(settings->adapter_name);
-    dst->dns_servers.data = new const char *[dst->dns_servers.size];
-    for (size_t i = 0; i != dst->dns_servers.size; i++) {
-        dst->dns_servers.data[i] = safe_strdup(settings->dns_servers.data[i]);
-    }
     return dst;
 }
 
@@ -191,10 +196,6 @@ void ag::vpn_win_tunnel_settings_destroy(ag::VpnWinTunnelSettings *settings) {
         return;
     }
     delete settings->adapter_name;
-    for (size_t i = 0; i != settings->dns_servers.size; i++) {
-        free((void *) settings->dns_servers.data[i]);
-    }
-    delete[] settings->dns_servers.data;
     delete settings;
 }
 

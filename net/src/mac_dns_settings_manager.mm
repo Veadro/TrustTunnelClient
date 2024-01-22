@@ -20,15 +20,15 @@ class VpnMacDnsSettingsManagerImpl {
     SCDynamicStoreRef m_store = nullptr;
     NSString *m_primary_service;
     SteadyClock::time_point m_last_updated_primary_service{};
-    std::string m_dns_server;
+    std::vector<std::string> m_dns_servers;
     bool m_valid = false;
     Logger m_logger{"VpnMacDnsSettingsManager"};
 
     struct ConstructorAccess {};
 
 public:
-    VpnMacDnsSettingsManagerImpl(ConstructorAccess access, std::string_view dns_server)
-            : m_dns_server(dns_server)
+    VpnMacDnsSettingsManagerImpl(ConstructorAccess access, std::span<const std::string_view> dns_servers)
+            : m_dns_servers(dns_servers.begin(), dns_servers.end())
     {
         static const int atexit_initialized [[maybe_unused]] = atexit(&VpnMacDnsSettingsManagerImpl::touch_prefs);
         m_queue = dispatch_queue_create("org.adguard.vpnlibs.MacDnsManager", DISPATCH_QUEUE_SERIAL);
@@ -56,8 +56,8 @@ public:
         m_valid = true;
     }
 
-    static VpnMacDnsSettingsManagerImplPtr create(std::string_view dns_server) {
-        auto manager = std::make_unique<VpnMacDnsSettingsManagerImpl>(ConstructorAccess{}, dns_server);
+    static VpnMacDnsSettingsManagerImplPtr create(std::span<const std::string_view> dns_servers) {
+        auto manager = std::make_unique<VpnMacDnsSettingsManagerImpl>(ConstructorAccess{}, dns_servers);
         if (!manager->m_valid) {
             manager.reset();
         }
@@ -85,7 +85,8 @@ public:
 
         for (NSString *key in changed_keys) {
             // If DNS setup changed, check if it must be rewritten
-            if ([key rangeOfString:@"^Setup:/Network/Service/.*/DNS$" options:NSRegularExpressionSearch].location != NSNotFound) {
+            if (!m_dns_servers.empty()
+                    && [key rangeOfString:@"^Setup:/Network/Service/.*/DNS$" options:NSRegularExpressionSearch].location != NSNotFound) {
                 // Avoid loops with other apps
                 if (SteadyClock::now() < m_last_updated_primary_service + Secs{5}) {
                     // This will be called several times since prefs is touched.
@@ -112,8 +113,10 @@ public:
                 m_primary_service = primary_service;
                 m_last_updated_primary_service = SteadyClock::now();
                 SCDynamicStoreNotifyValue(m_store, (__bridge CFStringRef) [NSString stringWithFormat:@"State:/Network/Service/%@/DNS", primary_service]);
-                touch_prefs();
-                setup_store();
+                if (!m_dns_servers.empty()) {
+                    touch_prefs();
+                    setup_store();
+                }
             }
         }
     }
@@ -132,8 +135,12 @@ public:
 
     void setup_store() {
         dbglog(m_logger, "Updating DNS servers");
+        NSMutableArray *server_addresses = [NSMutableArray new];
+        for (const auto &dns_server : m_dns_servers) {
+            [server_addresses addObject:@(dns_server.c_str())];
+        }
         @autoreleasepool {
-            NSDictionary *dns_config = @{@"ServerAddresses": @[@(m_dns_server.c_str())]};
+            NSDictionary *dns_config = @{@"ServerAddresses": server_addresses};
             NSDictionary *existing_config = (__bridge_transfer NSDictionary *) SCDynamicStoreCopyValue(m_store,
                     (__bridge CFStringRef) [NSString stringWithFormat:@"Setup:/Network/Service/%@/DNS", m_primary_service]);
             if (![dns_config isEqualToDictionary:existing_config]) {
@@ -158,8 +165,8 @@ public:
 };
 #endif
 
-VpnMacDnsSettingsManager::VpnMacDnsSettingsManager(VpnMacDnsSettingsManager::ConstructorAccess /*access*/, std::string_view dns_server) {
-    m_pimpl = VpnMacDnsSettingsManagerImpl::create(dns_server);
+VpnMacDnsSettingsManager::VpnMacDnsSettingsManager(VpnMacDnsSettingsManager::ConstructorAccess /*access*/, std::span<const std::string_view> dns_servers) {
+    m_pimpl = VpnMacDnsSettingsManagerImpl::create(dns_servers);
 }
 
 VpnMacDnsSettingsManager::~VpnMacDnsSettingsManager() = default;

@@ -84,9 +84,6 @@ private:
     std::optional<FileHandler> m_logfile_handler;
     std::optional<Logger::LogToFile> m_logtofile;
     std::chrono::milliseconds m_connect_timeout;
-#ifdef __APPLE__
-    std::unique_ptr<VpnMacDnsSettingsManager> m_dns_manager;
-#endif // __APPLE__
 #ifdef _WIN32
     HMODULE m_wintun;
 #endif
