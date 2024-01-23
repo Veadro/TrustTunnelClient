@@ -245,7 +245,7 @@ static constexpr http_parser_settings g_parser_settings = {
  */
 
 Http1Session *http1_session_init(HttpSession *session) {
-    auto *h1s = (Http1Session *) calloc(sizeof(Http1Session), 1);
+    auto *h1s = new Http1Session{};
     h1s->settings = &g_parser_settings;
     http_stream_reset_state(&h1s->stream);
     h1s->stream.id = 0;
@@ -323,7 +323,7 @@ int http1_session_close(HttpSession *session) {
     parser_reset(session, session->h1);
     free(session->h1->parser);
     session->h1->parser = nullptr;
-    free(session->h1);
+    delete session->h1;
     session->h1 = nullptr;
 
     return r;
