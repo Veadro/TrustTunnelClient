@@ -237,7 +237,12 @@ static void start_location_ping(LocationsPinger *pinger) {
             pinger->use_quic, pinger->anti_dpi, {i->info->relay_addresses.data, i->info->relay_addresses.size},
             pinger->relay_address_parallel};
     Ping *ping = ping_start(&ping_info, {ping_handler, pinger});
-    pinger->locations.emplace(ping, std::move(*i));
+    if(!ping) {
+        FinalizeLocationInfo info{std::move(*i), pinger->pending_locations.size() == 1 && pinger->locations.empty()};
+        finalize_location(pinger, info);
+    } else {
+        pinger->locations.emplace(ping, std::move(*i));
+    }
     pinger->pending_locations.pop_front();
 
     if (!pinger->pending_locations.empty()) {
