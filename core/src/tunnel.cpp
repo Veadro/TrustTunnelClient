@@ -1180,15 +1180,25 @@ static bool need_resolve_hostname(const Tunnel *self, VpnConnectAction action, c
 }
 
 static bool is_destination_reachable(const Tunnel *self, VpnConnection *conn, ServerUpstream *upstream) {
-    IpVersion ipv = sa_family_to_ip_version(conn->addr.src.ss_family).value();
+    const sockaddr_storage *dst = std::get_if<sockaddr_storage>(&conn->addr.dst);
+    if (!dst) {
+        // Let's assume a hostname+port pair is reachable.
+        return true;
+    }
+
+    std::optional<IpVersion> ipv = sa_family_to_ip_version(dst->ss_family);
+    if (!ipv) {
+        // Let's assume an invalid address is unreachable.
+        return false;
+    }
 
     if (conn->flags.test(CONNF_SUSPECT_EXCLUSION)
             // if upstream is not yet connected, it will be decided later whether to
             // reject or bypass the connection
             && ((self->vpn->endpoint_upstream != nullptr
-                        && !self->vpn->endpoint_upstream->ip_version_availability.test(ipv))
+                        && !self->vpn->endpoint_upstream->ip_version_availability.test(*ipv))
                     || (self->vpn->bypass_upstream != nullptr
-                            && !self->vpn->bypass_upstream->ip_version_availability.test(ipv)))) {
+                            && !self->vpn->bypass_upstream->ip_version_availability.test(*ipv)))) {
         // Suspecting that the connection targets an excluded domain, the library
         // accepts it creating a fake connection, reads some outgoing packets to find
         // out if the guess is true, and in case it is, the connection is migrated
@@ -1200,7 +1210,7 @@ static bool is_destination_reachable(const Tunnel *self, VpnConnection *conn, Se
         return false;
     }
 
-    if (upstream != nullptr && !upstream->ip_version_availability.test(ipv)) {
+    if (upstream != nullptr && !upstream->ip_version_availability.test(*ipv)) {
         return false;
     }
 

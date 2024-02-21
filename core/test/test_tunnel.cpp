@@ -380,7 +380,6 @@ public:
     }
 
     void close_connection(uint64_t id, bool, bool) override {
-        this->handler.func(this->handler.arg, SERVER_EVENT_CONNECTION_CLOSED, &id);
         this->closing_connections.push_back(id);
     }
 };
@@ -769,6 +768,11 @@ TEST_F(UdpRebindingTest, CachedUdpParams) {
 
     tun.listener_handler(client_listener, CLIENT_EVENT_CONNECTION_CLOSED, &client_id);
     run_event_loop_once();
+
+    ASSERT_EQ(1, fake_upstream->closing_connections.size());
+    tun.fake_upstream->handler.func(
+            tun.fake_upstream->handler.arg, SERVER_EVENT_CONNECTION_CLOSED, &fake_upstream->closing_connections[0]);
+
     client_id = ~0;
 
     ASSERT_EQ(cache_size + 1, cache->val.size());

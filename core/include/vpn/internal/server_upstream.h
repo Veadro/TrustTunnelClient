@@ -73,11 +73,12 @@ public:
     VpnClient *vpn = nullptr;
     ServerHandler handler = {};
     int id;
-    IpVersionSet ip_version_availability = IpVersionSet{}.set();
+    IpVersionSet ip_version_availability;
 
     explicit ServerUpstream(int id, std::optional<VpnUpstreamProtocolConfig> protocol_config = std::nullopt)
             : PROTOCOL_CONFIG(protocol_config)
             , id(id) {
+        ip_version_availability.set();
     }
     virtual ~ServerUpstream() = default;
 
