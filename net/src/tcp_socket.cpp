@@ -193,7 +193,7 @@ void tcp_socket_set_read_enabled(TcpSocket *socket, bool flag) {
         // Doing it manually, because bufferevent will not trigger read events, unless
         // new data was received.
         const struct evbuffer *buffer = bufferevent_get_input(bev);
-        if (socket->complete_read_task_id < 0 && evbuffer_get_length(buffer) > 0) {
+        if (socket->complete_read_task_id < 0 && (evbuffer_get_length(buffer) > 0 || (socket->flags & SF_GOT_EOF))) {
             socket->complete_read_task_id =
                     vpn_event_loop_submit(socket->parameters.ev_loop, {socket, complete_read, nullptr});
             if (0 > socket->complete_read_task_id) {
