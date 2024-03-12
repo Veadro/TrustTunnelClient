@@ -166,23 +166,23 @@ std::string make_credentials(std::string_view username, std::string_view passwor
 }
 
 static std::mutex m_session_cache_mutex;
-static ag::LruCache<std::string, bssl::UniquePtr<SSL_SESSION>> m_session_cache;
+static ag::LruCache<std::string, DeclPtr<SSL_SESSION, &SSL_SESSION_free>> m_session_cache;
 
 static int cache_session_cb(SSL *ssl, SSL_SESSION *session) {
     std::lock_guard l{m_session_cache_mutex};
     if (const char *hostname = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name)) {
-        m_session_cache.insert(hostname, bssl::UniquePtr<SSL_SESSION>{session});
+        m_session_cache.insert(hostname, DeclPtr<SSL_SESSION, &SSL_SESSION_free>{session});
         return 1;
     }
     return 0;
 }
 
-static bssl::UniquePtr<SSL_SESSION> pop_session_from_cache(const std::string &sni) {
+static DeclPtr<SSL_SESSION, &SSL_SESSION_free> pop_session_from_cache(const std::string &sni) {
     std::lock_guard l{m_session_cache_mutex};
     if (auto it = m_session_cache.get(sni); it != nullptr && *it != nullptr) {
-        SSL_SESSION *session = const_cast<bssl::UniquePtr<SSL_SESSION> &>(*it).release();
+        SSL_SESSION *session = const_cast<DeclPtr<SSL_SESSION, &SSL_SESSION_free> &>(*it).release();
         m_session_cache.erase(sni);
-        return bssl::UniquePtr<SSL_SESSION>(session);
+        return DeclPtr<SSL_SESSION, &SSL_SESSION_free>{session};
     }
     return nullptr;
 }

@@ -1,9 +1,13 @@
 #include "net/tls13_utils.h"
 
-#include "common/defs.h"
-#include "openssl/evp.h"
-#include "openssl/hkdf.h"
 #include <span>
+
+#include <openssl/evp.h>
+#include <ngtcp2/ngtcp2_crypto.h>
+
+#include "common/defs.h"
+
+extern "C" void ngtcp2_crypto_ctx_initial(ngtcp2_crypto_ctx *ctx);
 
 namespace ag::tls13_utils {
 
@@ -15,7 +19,10 @@ bool hkdf_extract(std::span<uint8_t> dest, std::span<const uint8_t> secret, std:
         return false;
     }
 
-    return HKDF_extract(dest.data(), &dest_len, prf, secret.data(), secret.size(), salt.data(), salt.size()) == 1;
+    ngtcp2_crypto_ctx ctx;
+    ngtcp2_crypto_ctx_initial(&ctx);
+
+    return ngtcp2_crypto_hkdf_extract(dest.data(), &ctx.md, secret.data(), secret.size(), salt.data(), salt.size()) == 0;
 }
 
 bool hkdf_expand_label(std::span<uint8_t> dest, std::span<const uint8_t> secret, std::string_view label,
@@ -33,9 +40,10 @@ bool hkdf_expand_label(std::span<uint8_t> dest, std::span<const uint8_t> secret,
     info.push_back((uint8_t) context.size());
     info.append(context.data(), context.size());
 
-    const EVP_MD *prf = EVP_sha256();
-    return HKDF_expand(dest.data(), dest.size(), prf, secret.data(), secret.size(),
-                   (uint8_t *) info.data(), info.size()) == 1;
+    ngtcp2_crypto_ctx ctx;
+    ngtcp2_crypto_ctx_initial(&ctx);
+    return ngtcp2_crypto_hkdf_expand(dest.data(), dest.size(), &ctx.md, secret.data(), secret.size(),
+                   (uint8_t *) info.data(), info.size()) == 0;
 }
 
-}
+}  // namespace ag::tls13_utils

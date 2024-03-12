@@ -3,13 +3,17 @@
 #include <climits>
 #include <set>
 
-#include <common/logger.h>
 #include <magic_enum/magic_enum.hpp>
-#include <openssl/aead.h>
-#include <openssl/aes.h>
-#include <openssl/digest.h>
-#include <openssl/hkdf.h>
-#include <quiche.h>
+#include <ngtcp2/ngtcp2_crypto.h>
+#include <openssl/ssl.h>
+
+#ifdef OPENSSL_IS_BORINGSSL
+#include <ngtcp2/ngtcp2_crypto_boringssl.h>
+#else
+#include <ngtcp2/ngtcp2_crypto_quictls.h>
+#endif
+
+#include "common/logger.h"
 
 namespace ag {
 
@@ -52,45 +56,53 @@ static constexpr QuicInitialSalt QUIC_INITIAL_SALTS[] = {
 
 static uint64_t get_varint(size_t *length, const uint8_t *buf);
 
+extern "C" int ngtcp2_crypto_cipher_ctx_encrypt_init(
+        ngtcp2_crypto_cipher_ctx *cipher_ctx, const ngtcp2_crypto_cipher *cipher, const uint8_t *key);
+
+extern "C" void ngtcp2_crypto_cipher_ctx_free(ngtcp2_crypto_cipher_ctx *ctx);
+
+extern "C" void ngtcp2_crypto_ctx_initial(ngtcp2_crypto_ctx *ctx);
+
 static bool create_hp_mask(uint8_t *hp_mask, const uint8_t *key, const uint8_t *sample) {
-    AES_KEY aes_key{};
-    static const size_t AES_KEY_SIZE = 128;
-    if (AES_set_encrypt_key(key, AES_KEY_SIZE, &aes_key) != 0) {
+    ngtcp2_crypto_ctx ctx;
+    ngtcp2_crypto_ctx_initial(&ctx);
+    AutoPod<ngtcp2_crypto_cipher_ctx, &ngtcp2_crypto_cipher_ctx_free> hp_ctx;
+
+    if (0 != ngtcp2_crypto_cipher_ctx_encrypt_init(&*hp_ctx, &ctx.hp, key)) {
         return false;
     }
-    AES_ecb_encrypt(sample, hp_mask, &aes_key, true);
-    return true;
+
+    return ngtcp2_crypto_hp_mask(hp_mask, &ctx.hp, hp_ctx.get(), sample) == 0;
 }
 
 static bool decrypt_quic_payload(uint8_t *dest, const uint8_t *payload_key, const uint8_t *ciphertext,
         size_t ciphertext_len, const uint8_t *nonce, const uint8_t *associated_data, size_t associated_data_len,
         size_t *max_overhead) {
-    const EVP_AEAD *cipher = EVP_aead_aes_128_gcm_tls13();
-    size_t keylen = EVP_AEAD_key_length(cipher);
-    uint8_t nonce_len = EVP_AEAD_nonce_length(cipher);
+    ngtcp2_crypto_ctx ctx;
+    ngtcp2_crypto_ctx_initial(&ctx);
+    AutoPod<ngtcp2_crypto_aead_ctx, &ngtcp2_crypto_aead_ctx_free> aead_ctx;
+    static constexpr auto NONCE_LEN = 12;
 
-    DeclPtr<EVP_AEAD_CTX, &EVP_AEAD_CTX_free> actx{
-            EVP_AEAD_CTX_new(cipher, payload_key, keylen, EVP_AEAD_DEFAULT_TAG_LENGTH)};
-    if (actx == nullptr) {
+    if (0 != ngtcp2_crypto_aead_ctx_decrypt_init(aead_ctx.get(), &ctx.aead, payload_key, NONCE_LEN)) {
         return false;
     }
-    size_t max_outlen = ciphertext_len;
-    size_t outlen = 0;
 
-    if (EVP_AEAD_CTX_open(actx.get(), dest, &outlen, max_outlen, nonce, nonce_len, ciphertext, ciphertext_len,
-                associated_data, associated_data_len)
-            != 1) {
-        return false;
+    int r = ngtcp2_crypto_decrypt(dest, &ctx.aead, aead_ctx.get(), ciphertext, ciphertext_len, nonce, NONCE_LEN,
+                    associated_data, associated_data_len);
+
+    if (max_overhead) {
+        *max_overhead = ctx.aead.max_overhead;
     }
-    // value to calculate decrypted packet size
-    *max_overhead = EVP_AEAD_max_overhead(cipher);
-    return true;
+
+    return r == 0;
 }
+
+static constexpr auto MIN_CLIENT_INITIAL_LEN = 1200;
 
 std::optional<std::vector<uint8_t>> quic_utils::decrypt_initial(
         U8View initial_packet, const quic_utils::QuicPacketHeader &hd) {
 
-    if (initial_packet.size() < QUICHE_MIN_CLIENT_INITIAL_LEN) {
+    if (initial_packet.size() < MIN_CLIENT_INITIAL_LEN) {
         return std::nullopt;
     }
     const auto *initial_salt_it = std::find_if(
@@ -279,14 +291,44 @@ std::optional<quic_utils::QuicPacketHeader> quic_utils::parse_quic_header(U8View
         return std::nullopt;
     }
 
-    ag::quic_utils::QuicPacketHeader hd;
     // Extract data needed for decryption of initial packet
-    int parsing_result = quiche_header_info(initial_packet.data(), initial_packet.size(), QUIC_MAX_CONN_ID_LEN,
-            &hd.version, &hd.type, hd.scid.data(), &hd.scid_len, hd.dcid.data(), &hd.dcid_len, hd.token.data(),
-            &hd.token_len);
-    if (parsing_result != 0) {
-        return std::nullopt;
+    ngtcp2_pkt_hd pkt_hd;
+    int pkt_num_offset = ngtcp2_pkt_decode_hd_long(&pkt_hd, initial_packet.data(), initial_packet.size());
+    ag::quic_utils::QuicPacketHeader hd{};
+    if (pkt_num_offset < 0) {
+        hd.type = QuicPacketType::SHORT;
+        ngtcp2_pkt_decode_hd_short(&pkt_hd, initial_packet.data(), initial_packet.size(), NGTCP2_MAX_CIDLEN);
     }
+    hd.version = pkt_hd.version;
+    switch (pkt_hd.type) {
+    case NGTCP2_PKT_INITIAL:
+        hd.type = QuicPacketType::INITIAL;
+        break;
+    case NGTCP2_PKT_STATELESS_RESET:
+    case NGTCP2_PKT_RETRY:
+        hd.type = QuicPacketType::RETRY;
+        break;
+    case NGTCP2_PKT_HANDSHAKE:
+        hd.type = QuicPacketType::HANDSHAKE;
+        break;
+    case NGTCP2_PKT_0RTT:
+        hd.type = QuicPacketType::ZERO_RTT;
+        break;
+    case NGTCP2_PKT_1RTT:
+        hd.type = QuicPacketType::SHORT;
+        break;
+    case NGTCP2_PKT_VERSION_NEGOTIATION:
+        hd.type = QuicPacketType::VERSION_NEGOTIATION;
+        break;
+    default:
+        break;
+    }
+    memcpy(hd.scid.data(), pkt_hd.scid.data, QUIC_MAX_CONN_ID_LEN);
+    hd.scid_len = pkt_hd.scid.datalen;
+    memcpy(hd.dcid.data(), pkt_hd.dcid.data, QUIC_MAX_CONN_ID_LEN);
+    hd.dcid_len = pkt_hd.dcid.datalen;
+    memcpy(hd.token.data(), pkt_hd.token, std::min(pkt_hd.tokenlen, QUIC_MAX_TOKEN_LEN));
+    hd.token_len = pkt_hd.tokenlen;
     dbglog(log, "QUIC Packet type = {}", magic_enum::enum_name(quic_utils::QuicPacketType(hd.type)));
     return hd;
 }

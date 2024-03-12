@@ -7,7 +7,9 @@
 #include "direct_upstream.h"
 #include "fallbackable_upstream_connector.h"
 #include "http2_upstream.h"
+#ifndef DISABLE_HTTP3
 #include "http3_upstream.h"
+#endif
 #include "memfile_buffer.h"
 #include "memory_buffer.h"
 #include "single_upstream_connector.h"
@@ -353,7 +355,9 @@ static std::unique_ptr<ServerUpstream> make_upstream(const VpnUpstreamProtocolCo
                 });
         break;
     case VPN_UP_HTTP3:
+#ifndef DISABLE_HTTP3
         upstream = std::make_unique<Http3Upstream>(VpnClient::next_upstream_id(), protocol);
+#endif
         break;
     }
 

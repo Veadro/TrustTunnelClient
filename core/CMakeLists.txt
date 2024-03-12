@@ -17,7 +17,6 @@ set(SOURCE_FILES
         ${VPNCORE_SRC_DIR}/socks_listener.cpp
         ${VPNCORE_SRC_DIR}/tun_device_listener.cpp
         ${VPNCORE_SRC_DIR}/http2_upstream.cpp
-        ${VPNCORE_SRC_DIR}/http3_upstream.cpp
         ${VPNCORE_SRC_DIR}/upstream_multiplexer.cpp
         ${VPNCORE_SRC_DIR}/http_udp_multiplexer.cpp
         ${VPNCORE_SRC_DIR}/http_icmp_multiplexer.cpp
@@ -37,7 +36,9 @@ set(SOURCE_FILES
         ${VPNCORE_SRC_DIR}/vpn_connection.cpp
         ${VPNCORE_SRC_DIR}/connection_statistics.cpp
 )
-
+if (NOT DISABLE_HTTP3)
+    list(APPEND SOURCE_FILES ${VPNCORE_SRC_DIR}/http3_upstream.cpp)
+endif()
 
 if(NOT TARGET vpnlibs_common)
     add_subdirectory(${VPN_LIB_DIR}/common ${CMAKE_BINARY_DIR}/common)
@@ -52,6 +53,9 @@ set_target_properties(vpnlibs_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if (MSVC)
     target_compile_definitions(vpnlibs_core PRIVATE _UNICODE UNICODE)
 endif()
+if (DISABLE_HTTP3)
+    target_compile_definitions(vpnlibs_core PUBLIC DISABLE_HTTP3)
+endif()
 
 target_include_directories(vpnlibs_core PUBLIC include)
 
@@ -59,13 +63,18 @@ find_package(klib REQUIRED)
 find_package(magic_enum REQUIRED)
 find_package(libevent REQUIRED)
 find_package(dns-libs REQUIRED)
+if (NOT DISABLE_HTTP3)
 find_package(quiche REQUIRED)
+endif()
 
 target_link_libraries(vpnlibs_core vpnlibs_common vpnlibs_net)
 target_link_libraries(vpnlibs_core klib::klib magic_enum::magic_enum libevent::libevent)
-target_link_libraries(vpnlibs_core dns-libs::dns-libs quiche::quiche)
-if (WIN32)
-    target_link_libraries(vpnlibs_core BCrypt) # Quiche requirement
+target_link_libraries(vpnlibs_core dns-libs::dns-libs)
+if (NOT DISABLE_HTTP3)
+    target_link_libraries(vpnlibs_core quiche::quiche)
+    if (WIN32)
+        target_link_libraries(vpnlibs_core BCrypt) # Quiche requirement
+    endif()
 endif()
 
 if(NOT TARGET vpnlibs_tcpip)
@@ -117,9 +126,11 @@ endforeach(FN ${MOCKED_FUNCTIONS})
 target_link_libraries(vpnlibs_core_mocked vpnlibs_common vpnlibs_net vpnlibs_tcpip)
 target_link_libraries(vpnlibs_core_mocked klib::klib magic_enum::magic_enum libevent::libevent)
 target_link_libraries(vpnlibs_core_mocked dns-libs::dns-libs)
-target_link_libraries(vpnlibs_core_mocked quiche::quiche)
-if (WIN32)
-    target_link_libraries(vpnlibs_core_mocked BCrypt) # Quiche requirement
+if (NOT DISABLE_HTTP3)
+    target_link_libraries(vpnlibs_core_mocked quiche::quiche)
+    if (WIN32)
+        target_link_libraries(vpnlibs_core_mocked BCrypt) # Quiche requirement
+    endif()
 endif()
 target_include_directories(vpnlibs_core_mocked PUBLIC include)
 

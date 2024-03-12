@@ -29,8 +29,8 @@ class VpnLibsConan(ConanFile):
     exports_sources = patch_files
 
     def requirements(self):
-        self.requires("dns-libs/2.4.47@adguard_team/native_libs_common", transitive_headers=True)
-        self.requires("native_libs_common/5.0.8@adguard_team/native_libs_common", force=True, transitive_headers=True)
+        self.requires("dns-libs/2.5.5@adguard_team/native_libs_common", transitive_headers=True)
+        self.requires("native_libs_common/6.0.0@adguard_team/native_libs_common", force=True, transitive_headers=True)
 
         self.requires("brotli/1.1.0", transitive_headers=True)
         self.requires("cxxopts/3.1.1", transitive_headers=True)
@@ -41,10 +41,14 @@ class VpnLibsConan(ConanFile):
         self.requires("magic_enum/0.9.5", transitive_headers=True)
         self.requires("nghttp2/1.56.0@adguard_team/native_libs_common", transitive_headers=True)
         self.requires("nlohmann_json/3.10.5")
-        self.requires("openssl/boring-2023-05-17@adguard_team/native_libs_common", transitive_headers=True)
-        self.requires("quiche/0.17.1@adguard_team/native_libs_common", transitive_headers=True)
         self.requires("tomlplusplus/3.3.0")
         self.requires("zlib/1.2.11", transitive_headers=True)
+
+        if "mips" not in str(self.settings.arch):
+            self.requires("quiche/0.17.1@adguard_team/native_libs_common", transitive_headers=True)
+            self.requires("openssl/boring-2023-05-17@adguard_team/native_libs_common", transitive_headers=True)
+        else:
+            self.requires("openssl/3.1.5-quic1@adguard_team/native_libs_common", transitive_headers=True, force=True)
 
     def build_requirements(self):
         self.test_requires("gtest/1.14.0")

@@ -29,7 +29,9 @@
 // These includes must be here in order to compile
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
+#ifndef DISABLE_HTTP3
 #include <quiche.h>
+#endif
 
 namespace ag {
 
@@ -691,7 +693,11 @@ Ping *ping_start(const PingInfo *info, PingHandler handler) {
     self->loop = info->loop;
     self->handler = handler;
     self->anti_dpi = info->anti_dpi;
+#ifndef DISABLE_HTTP3
     self->use_quic = info->use_quic;
+#else
+    self->use_quic = false;
+#endif
     self->rounds_target = info->nrounds ? info->nrounds : DEFAULT_PING_ROUNDS;
 
     self->round_timeout_ms = info->timeout_ms ? info->timeout_ms : DEFAULT_PING_TIMEOUT_MS;
@@ -750,6 +756,7 @@ const char *ping_get_id(const Ping *ping) {
     return ping->id.c_str();
 }
 
+#ifndef DISABLE_HTTP3
 std::vector<uint8_t> prepare_quic_initial(const char *sni) {
     DeclPtr<SSL_CTX, &SSL_CTX_free> ctx{SSL_CTX_new(TLS_method())};
     DeclPtr<SSL, &SSL_free> ssl{SSL_new(ctx.get())};
@@ -777,6 +784,13 @@ std::vector<uint8_t> prepare_quic_initial(const char *sni) {
     assert(ret == QUICHE_MIN_CLIENT_INITIAL_LEN);
     return initial;
 }
+#else
+std::vector<uint8_t> prepare_quic_initial(const char *) {
+    abort();
+}
+#endif
+
+static constexpr auto MIN_CLIENT_INITIAL_LEN = 1200;
 
 std::vector<uint8_t> prepare_client_hello(const char *sni) {
     DeclPtr<SSL_CTX, &SSL_CTX_free> ctx{SSL_CTX_new(TLS_method())};
@@ -786,7 +800,7 @@ std::vector<uint8_t> prepare_client_hello(const char *sni) {
     SSL_set0_wbio(ssl.get(), BIO_new(BIO_s_mem()));
     SSL_connect(ssl.get());
     std::vector<uint8_t> initial;
-    initial.resize(QUICHE_MIN_CLIENT_INITIAL_LEN);
+    initial.resize(MIN_CLIENT_INITIAL_LEN);
     ret = BIO_read(SSL_get_wbio(ssl.get()), initial.data(), (int) initial.size());
     assert(ret > 0);
     initial.resize(ret);

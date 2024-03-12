@@ -4,6 +4,8 @@
 
 #include "net/tls.h"
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 static RSA *gen_rsa(int bits)
 {
     RSA *rsa = RSA_new();
@@ -32,9 +34,9 @@ static RSA *gen_rsa(int bits)
 }
 
 X509 *make_cert() {
-    bssl::UniquePtr<X509> cert(X509_new());
+    ag::DeclPtr<X509, &X509_free> cert(X509_new());
     RSA *rsa = gen_rsa(2048);
-    bssl::UniquePtr<EVP_PKEY> pkey{EVP_PKEY_new()};
+    ag::DeclPtr<EVP_PKEY, &EVP_PKEY_free> pkey{EVP_PKEY_new()};
     EVP_PKEY_assign_RSA(pkey.get(), rsa);
 
     if (!cert ||  //
@@ -50,7 +52,7 @@ X509 *make_cert() {
             !ASN1_TIME_adj(X509_getm_notAfter(cert.get()), 1474934400, 1, 0)) {
         return nullptr;
     }
-    bssl::UniquePtr<BASIC_CONSTRAINTS> bc(BASIC_CONSTRAINTS_new());
+    ag::DeclPtr<BASIC_CONSTRAINTS, &BASIC_CONSTRAINTS_free> bc(BASIC_CONSTRAINTS_new());
     if (!bc) {
         return nullptr;
     }
@@ -62,6 +64,7 @@ X509 *make_cert() {
     X509_sign(cert.get(), pkey.get(), EVP_sha256());
     return cert.release();
 }
+#pragma GCC diagnostic pop
 
 TEST(TlsSerialize, CertWorks) {
     X509 *x = make_cert();
