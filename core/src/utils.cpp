@@ -208,6 +208,12 @@ std::variant<SslPtr, std::string> make_ssl(
         SSL_set_session(ssl.get(), session.release());
     }
 
+#ifdef __mips__
+    if (!SSL_set_cipher_list(ssl.get(), "CHACHA20") || !SSL_set_ciphersuites(ssl.get(), "TLS_CHACHA20_POLY1305_SHA256")) {
+        return "Failed to set CHACHA20 cipher";
+    }
+#endif
+
 #if 0
     if (char *ssl_keylog_file = getenv("SSLKEYLOGFILE"); ssl_keylog_file != nullptr) {
         static DeclPtr<std::FILE, &std::fclose> handle{ std::fopen(ssl_keylog_file, "a") };

@@ -828,10 +828,8 @@ static int data_source_add(HttpStream *stream, const uint8_t *data, size_t len, 
     return rv;
 }
 
-struct nghttp2_stream;
 extern "C" {
 int nghttp2_stream_check_deferred_item(struct nghttp2_stream *stream);
-extern struct nghttp2_stream *nghttp2_session_get_stream(nghttp2_session *session, int32_t stream_id);
 }
 
 static int data_source_schedule_send(nghttp2_session *ngsession, int32_t stream_id, DataSource *source) {
