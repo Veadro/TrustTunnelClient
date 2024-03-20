@@ -320,3 +320,10 @@ TEST(QuicUtilsTest, ExtractClientHelloFailed) {
 
     ASSERT_FALSE(payload);
 }
+
+TEST(QuicUtilsTest, ParseBadHeader) {
+    std::vector<uint8_t> bad_packet = decode_from_hex(
+            "000000");
+    auto hd = ag::quic_utils::parse_quic_header(ag::as_u8v(bad_packet));
+    ASSERT_FALSE(hd);
+}

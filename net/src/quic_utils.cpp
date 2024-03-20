@@ -292,12 +292,14 @@ std::optional<quic_utils::QuicPacketHeader> quic_utils::parse_quic_header(U8View
     }
 
     // Extract data needed for decryption of initial packet
-    ngtcp2_pkt_hd pkt_hd;
+    ngtcp2_pkt_hd pkt_hd{};
     int pkt_num_offset = ngtcp2_pkt_decode_hd_long(&pkt_hd, initial_packet.data(), initial_packet.size());
     ag::quic_utils::QuicPacketHeader hd{};
     if (pkt_num_offset < 0) {
         hd.type = QuicPacketType::SHORT;
-        ngtcp2_pkt_decode_hd_short(&pkt_hd, initial_packet.data(), initial_packet.size(), NGTCP2_MAX_CIDLEN);
+        if (ngtcp2_pkt_decode_hd_short(&pkt_hd, initial_packet.data(), initial_packet.size(), NGTCP2_MAX_CIDLEN) < 0) {
+            return std::nullopt;
+        }
     }
     hd.version = pkt_hd.version;
     switch (pkt_hd.type) {
