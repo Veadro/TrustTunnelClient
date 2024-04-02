@@ -206,7 +206,7 @@ static WINTUN_SESSION_HANDLE create_wintun_session(
             warnlog(logger, "Set ipv6: {}", ag::sys::strerror(ag::sys::last_error()));
         }
     }
-    WINTUN_SESSION_HANDLE session = WintunStartSession(adapter, WINTUN_MAX_RING_CAPACITY);
+    WINTUN_SESSION_HANDLE session = WintunStartSession(adapter, 0x1000000 /*16 MiB*/);
     if (!session) {
         errlog(logger, "Init session: {}", ag::sys::strerror(ag::sys::last_error()));
         return nullptr;
