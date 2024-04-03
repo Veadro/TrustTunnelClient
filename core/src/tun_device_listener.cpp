@@ -453,7 +453,7 @@ void TunListener::recv_packets_task(void *arg, ag::TaskId) {
     }
 }
 
-void TunListener::recv_packets_handler(void *arg, const VpnPackets *packets){
+void TunListener::recv_packets_handler(void *arg, const VpnPackets *packets) {
     auto *listener = (TunListener *) arg;
     std::unique_lock l(listener->m_recv_packets_queue_mutex);
     for (size_t i = 0; i < packets->size; ++i) {

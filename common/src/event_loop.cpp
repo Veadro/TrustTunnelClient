@@ -232,8 +232,10 @@ TaskId vpn_event_loop_submit(VpnEventLoop *loop, VpnEventLoopTask task) {
     switch (loop->state) {
     case ELS_BASE_EXITED:
         loop->guard.unlock();
-        log_task(loop, task_id, trace, "Finalizing immediately as loop is exited");
-        task.finalize(task.arg);
+        if (task.finalize != nullptr) {
+            log_task(loop, task_id, trace, "Finalizing immediately as loop is exited");
+            task.finalize(task.arg);
+        }
         return -1;
     case ELS_STOPPED:
     case ELS_RUNNING:
