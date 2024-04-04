@@ -793,17 +793,20 @@ std::vector<uint8_t> prepare_quic_initial(const char *) {
 static constexpr auto MIN_CLIENT_INITIAL_LEN = 1200;
 
 std::vector<uint8_t> prepare_client_hello(const char *sni) {
-    DeclPtr<SSL_CTX, &SSL_CTX_free> ctx{SSL_CTX_new(TLS_method())};
-    DeclPtr<SSL, &SSL_free> ssl{SSL_new(ctx.get())};
-    int ret [[maybe_unused]] = SSL_set_tlsext_host_name(ssl.get(), sni);
-    assert(ret);
+    static constexpr uint8_t HTTP2_ALPN[] = {2, 'h', '2'};
+
+    SslPtr ssl;
+    auto r = make_ssl(nullptr, nullptr, {HTTP2_ALPN, std::size(HTTP2_ALPN)}, sni);
+    assert(std::holds_alternative<SslPtr>(r));
+    ssl = std::move(std::get<SslPtr>(r));
     SSL_set0_wbio(ssl.get(), BIO_new(BIO_s_mem()));
     SSL_connect(ssl.get());
     std::vector<uint8_t> initial;
     initial.resize(MIN_CLIENT_INITIAL_LEN);
-    ret = BIO_read(SSL_get_wbio(ssl.get()), initial.data(), (int) initial.size());
+    auto ret = BIO_read(SSL_get_wbio(ssl.get()), initial.data(), (int) initial.size());
     assert(ret > 0);
     initial.resize(ret);
+
     return initial;
 }
 

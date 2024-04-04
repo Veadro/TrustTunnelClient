@@ -9,6 +9,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
+#include <brotli/decode.h>
 
 #ifndef _WIN32
 #include <ifaddrs.h>
@@ -31,6 +32,7 @@
 #include "common/logger.h"
 #include "common/net_utils.h"
 #include "common/utils.h"
+#include "common/cache.h"
 #include "net/http_header.h"
 #include "net/http_session.h"
 #include "vpn/platform.h"
@@ -712,6 +714,120 @@ bool is_private_or_linklocal_ipv4_address(const in_addr *ip_ptr) {
             || ((ip_int & 0xFFFF0000) == 0xA9FE0000)  // 169.254.0.0/12
             || ((ip_int & 0xFFF00000) == 0xAC100000)  // 172.16.0.0/12
             || ((ip_int & 0xFFFF0000) == 0xC0A80000); // 192.168.0.0/16
+}
+
+
+static std::mutex m_session_cache_mutex;
+static ag::LruCache<std::string, DeclPtr<SSL_SESSION, &SSL_SESSION_free>> m_session_cache;
+
+static int cache_session_cb(SSL *ssl, SSL_SESSION *session) {
+    std::lock_guard l{m_session_cache_mutex};
+    if (const char *hostname = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name)) {
+        m_session_cache.insert(hostname, DeclPtr<SSL_SESSION, &SSL_SESSION_free>{session});
+        return 1;
+    }
+    return 0;
+}
+
+static DeclPtr<SSL_SESSION, &SSL_SESSION_free> pop_session_from_cache(const std::string &sni) {
+    std::lock_guard l{m_session_cache_mutex};
+    if (auto it = m_session_cache.get(sni); it != nullptr && *it != nullptr) {
+        SSL_SESSION *session = const_cast<DeclPtr<SSL_SESSION, &SSL_SESSION_free> &>(*it).release();
+        m_session_cache.erase(sni);
+        return DeclPtr<SSL_SESSION, &SSL_SESSION_free>{session};
+    }
+    return nullptr;
+}
+
+#ifdef OPENSSL_IS_BORINGSSL
+static int DecompressBrotliCert(SSL *ssl, CRYPTO_BUFFER **out, size_t uncompressed_len,
+        const uint8_t *in, size_t in_len) {
+    uint8_t *data;
+    CRYPTO_BUFFER *decompressed = CRYPTO_BUFFER_alloc(&data, uncompressed_len);
+    if (!decompressed) {
+        return 0;
+    }
+
+    size_t output_size = uncompressed_len;
+    if (BROTLI_DECODER_RESULT_SUCCESS != BrotliDecoderDecompress(in_len, in, &output_size, data)
+            || output_size != uncompressed_len) {
+        CRYPTO_BUFFER_free(decompressed);
+        return 0;
+    }
+
+    *out = decompressed;
+    return 1;
+}
+#endif
+
+std::variant<SslPtr, std::string> make_ssl(
+        int (*verification_callback)(X509_STORE_CTX *, void *), void *arg, U8View alpn_protos, const char *sni) {
+    DeclPtr<SSL_CTX, SSL_CTX_free> ctx{SSL_CTX_new(TLS_client_method())};
+    if (verification_callback && arg) {
+        SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_PEER, nullptr);
+        SSL_CTX_set_cert_verify_callback(ctx.get(), verification_callback, arg);
+    }
+    if (0 != SSL_CTX_set_alpn_protos(ctx.get(), alpn_protos.data(), alpn_protos.size())) {
+        return "Failed to set ALPN protocols";
+    }
+
+#ifdef OPENSSL_IS_BORINGSSL
+    SSL_CTX_set_grease_enabled(ctx.get(), 1);
+    if (SSL_CTX_add_cert_compression_alg(ctx.get(), TLSEXT_cert_compression_zlib, nullptr, DecompressBrotliCert) != 1) {
+        return "Failed to add certificate compression algorithm";
+    }
+    SSL_CTX_set_permute_extensions(ctx.get(), true);
+#endif
+
+    SSL_CTX_set_session_cache_mode(ctx.get(), SSL_SESS_CACHE_CLIENT);
+    SSL_CTX_sess_set_new_cb(ctx.get(), cache_session_cb);
+
+    SslPtr ssl{SSL_new(ctx.get())};
+    if (!SocketAddress{sni}.valid()) {
+        if (0 == SSL_set_tlsext_host_name(ssl.get(), sni)) {
+            return "Failed to set SNI";
+        }
+    }
+
+#ifdef OPENSSL_IS_BORINGSSL
+    SSL_set_enable_ech_grease(ssl.get(), 1);
+    /**
+     * Mimic Chrome ClientHello by indicating that we support ALPS extension,
+     * but don't actually send any settings (Chrome does the same).
+     * Conforming HTTP/2 implementations should use the settings from the SETTINGS frame anyway.
+     */
+    if (SSL_add_application_settings(ssl.get(), (uint8_t *)"h2", 2, nullptr, 0) != 1) {
+        return "Failed to add ALPS extension";
+    }
+    SSL_enable_signed_cert_timestamps(ssl.get());
+#endif
+    SSL_set_connect_state(ssl.get());
+    if (SSL_set_tlsext_status_type(ssl.get(), TLSEXT_STATUSTYPE_ocsp) != 1) {
+        return "Failed to set OCSP state extension";
+    }
+
+    if (auto session = pop_session_from_cache(sni)) {
+        SSL_set_session(ssl.get(), session.release());
+    }
+
+#ifdef __mips__
+    if (!SSL_set_cipher_list(ssl.get(), "CHACHA20") || !SSL_set_ciphersuites(ssl.get(), "TLS_CHACHA20_POLY1305_SHA256")) {
+        return "Failed to set CHACHA20 cipher";
+    }
+#endif
+
+#if 0
+    if (char *ssl_keylog_file = getenv("SSLKEYLOGFILE"); ssl_keylog_file != nullptr) {
+        static DeclPtr<std::FILE, &std::fclose> handle{ std::fopen(ssl_keylog_file, "a") };
+        SSL_CTX_set_keylog_callback(ctx.get(),
+                [] (const SSL *, const char *line) {
+                    fprintf(handle.get(), "%s\n", line);
+                    fflush(handle.get());
+                });
+    }
+#endif
+
+    return ssl;
 }
 
 } // namespace ag

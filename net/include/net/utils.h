@@ -18,6 +18,7 @@
 #include "common/utils.h"
 #include "net/http_header.h"
 #include "vpn/utils.h"
+#include <openssl/ssl.h>
 
 namespace ag {
 
@@ -213,6 +214,11 @@ static inline size_t varint_len(uint64_t varint_value) {
     }
     return 8;
 }
+
+using SslPtr = ag::DeclPtr<SSL, SSL_free>;
+
+std::variant<SslPtr, std::string> make_ssl(
+        int (*verification_callback)(X509_STORE_CTX *, void *), void *arg, ag::U8View alpn_protos, const char *sni);
 
 /**
  * Check if the specified IPv4 address is a private address as defined by RFC 1918
