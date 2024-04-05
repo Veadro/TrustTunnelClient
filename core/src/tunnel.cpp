@@ -191,7 +191,11 @@ static void complete_connect_request_task(void *arg, TaskId) {
         ClientConnectResult result = server_error_to_connect_result(ctx->err_code);
         listener->complete_connect_request(conn->client_id, result);
         if (result != CCR_PASS) {
-            conn->state = CONNS_REJECTED;
+            // Relookup connection since complete_connect_request may lead to it's close.
+            conn = vpn_connection_get_by_id(tunnel->connections.by_client_id, ctx->listener_conn_id);
+            if (conn != nullptr) {
+                conn->state = CONNS_REJECTED;
+            }
         }
         break;
     }
