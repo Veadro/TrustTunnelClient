@@ -56,7 +56,6 @@ Run tests on Linux:
             -DCMAKE_C_FLAGS='-fsanitize=address' \
             -DCMAKE_CXX_FLAGS='-fsanitize=address -stdlib=libc++' \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address ${LDFLAGS}" \
-            -DCONAN_HOST_PROFILE="default;auto-cmake" \
             ..
 
             make -j 4 tests && ctest -D ExperimentalTest --no-compress-output
@@ -106,7 +105,6 @@ Run tests on Windows:
             cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
                 -DCMAKE_C_FLAGS_DEBUG=/MT ^
                 -DCMAKE_CXX_FLAGS_DEBUG=/MT ^
-                -DCONAN_HOST_PROFILE="%VPN_LIBS_ROOT%/conan/profiles/windows-msvc.jinja;auto-cmake" ^
                 -G Ninja ^
                 ..
 
@@ -176,7 +174,6 @@ Run tests on macOS:
                 -DCMAKE_CXX_FLAGS="-fsanitize=address -stdlib=libc++" \
                 -DCMAKE_C_FLAGS="-fsanitize=address" \
                 -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address' \
-                -DCONAN_HOST_PROFILE="${VPN_LIBS_ROOT}/conan/profiles/apple.jinja;auto-cmake" \
                 -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
                 ..
 

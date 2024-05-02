@@ -97,7 +97,6 @@ To build the main library:
     cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
       -DCMAKE_C_FLAGS_DEBUG=/MT ^
       -DCMAKE_CXX_FLAGS_DEBUG=/MT ^
-      -DCONAN_HOST_PROFILE="../conan/profiles/windows-msvc.jinja;auto-cmake" ^
       -G "Visual Studio 16 2019" ^
       ..
     cmake --build . --target vpnlibs_core
@@ -111,7 +110,6 @@ To build the main library:
       -DCMAKE_C_COMPILER="clang" \
       -DCMAKE_CXX_COMPILER="clang++" \
       -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
-      -DCONAN_HOST_PROFILE="../conan/profiles/apple.jinja;auto-cmake" \
       ..
     cmake --build . --target vpnlibs_core
     ```

@@ -15,8 +15,7 @@ RUN export LDFLAGS=-fuse-ld=lld && cmake ..  \
         -DCMAKE_BUILD_TYPE=RelWithDebInfo -G "Ninja" \
         -DCMAKE_C_COMPILER="clang" \
         -DCMAKE_CXX_COMPILER="clang++" \
-        -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
-        -DCONAN_HOST_PROFILE="default;auto-cmake" && \
+        -DCMAKE_CXX_FLAGS="-stdlib=libc++" && \
     ninja standalone_client && \
     mv ./standalone/standalone_client /test/
 

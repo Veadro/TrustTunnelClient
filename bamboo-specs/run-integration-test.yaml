@@ -144,7 +144,6 @@ Run live test:
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_CXX_FLAGS='-stdlib=libc++ -DI_DO_WANT_TO_RUN_LIVE_TESTS' \
-            -DCONAN_HOST_PROFILE="default;auto-cmake" \
             ..
 
             make -j 4 test_vpn_client_live
