@@ -8,6 +8,8 @@
 
 static const ag::Logger logger("OS_TUNNEL_LINUX");
 
+static constexpr auto TABLE_ID = 880;
+
 void ag::tunnel_utils::sys_cmd(const std::string &cmd) {
     dbglog(logger, "{} {}", (geteuid() == 0) ? '#' : '$', cmd);
     auto result = exec_with_output(cmd.c_str());
@@ -25,13 +27,14 @@ ag::VpnError ag::VpnLinuxTunnel::init(const ag::VpnOsTunnelSettings *settings) {
     }
     setup_if();
     setup_dns();
-    setup_routes();
+    setup_routes(TABLE_ID);
 
     return {};
 }
 
 void ag::VpnLinuxTunnel::deinit() {
     close(m_tun_fd);
+    teardown_routes(TABLE_ID);
 }
 
 evutil_socket_t ag::VpnLinuxTunnel::get_fd() {
@@ -70,17 +73,25 @@ void ag::VpnLinuxTunnel::setup_if() {
     ag::tunnel_utils::fsystem("ip link set dev {} mtu {} up", m_tun_name, m_settings->mtu);
 }
 
-void ag::VpnLinuxTunnel::setup_routes() {
+void ag::VpnLinuxTunnel::setup_routes(int16_t table_id) {
     std::vector<ag::CidrRange> ipv4_routes;
     std::vector<ag::CidrRange> ipv6_routes;
     ag::tunnel_utils::get_setup_routes(
             ipv4_routes, ipv6_routes, m_settings->included_routes, m_settings->excluded_routes);
 
     for (auto &route : ipv4_routes) {
-        ag::tunnel_utils::fsystem("ip ro add {} dev {}", route.to_string(), m_tun_name);
+        ag::tunnel_utils::fsystem("ip ro add {} dev {} table {}", route.to_string(), m_tun_name, table_id);
     }
     for (auto &route : ipv6_routes) {
-        ag::tunnel_utils::fsystem("ip -6 ro add {} dev {}", route.to_string(), m_tun_name);
+        ag::tunnel_utils::fsystem("ip -6 ro add {} dev {} table {}", route.to_string(), m_tun_name, table_id);
+    }
+    if (!ipv4_routes.empty()) {
+        ag::tunnel_utils::fsystem("ip rule add prio 30801 lookup {}", table_id);
+        ag::tunnel_utils::fsystem("ip rule add prio 30800 sport 22 lookup main");
+    }
+    if (!ipv6_routes.empty()) {
+        ag::tunnel_utils::fsystem("ip -6 rule add prio 30801 lookup {}", table_id);
+        ag::tunnel_utils::fsystem("ip -6 rule add prio 30800 sport 22 lookup main");
     }
 }
 
@@ -91,4 +102,12 @@ void ag::VpnLinuxTunnel::setup_dns() {
     std::vector<std::string_view> dns_servers{
             m_settings->dns_servers.data, m_settings->dns_servers.data + m_settings->dns_servers.size};
     ag::tunnel_utils::fsystem("resolvectl dns {} {}", m_tun_name, fmt::join(dns_servers, " "));
+}
+
+void ag::VpnLinuxTunnel::teardown_routes(int16_t table_id) {
+    // It is safe to leave these rules but it is better to remove them.
+    ag::tunnel_utils::fsystem("ip rule del prio 30801 lookup {}", table_id);
+    ag::tunnel_utils::fsystem("ip rule del prio 30800 sport 22 lookup main");
+    ag::tunnel_utils::fsystem("ip -6 rule del prio 30801 lookup {}", table_id);
+    ag::tunnel_utils::fsystem("ip -6 rule del prio 30800 sport 22 lookup main");
 }
