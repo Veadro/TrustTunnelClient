@@ -730,7 +730,7 @@ static int64_t addr_length_from_request(Socks5AddressType type, const uint8_t *d
     case S5AT_IPV4_APPNAME:
         return (length == 0) ? -1 : 1 + data[0] + 4;
     case S5AT_DOMAINNAME_APPNAME:
-        return (length == 0 || length < data[0] + 2) ? -1 : 1 + data[0] + 1 + data[data[0] + 1];
+        return (length == 0 || length < size_t(data[0] + 2)) ? -1 : 1 + data[0] + 1 + data[data[0] + 1];
     case S5AT_IPV6_APPNAME:
         return (length == 0) ? -1 : 1 + data[0] + 16;
     }
