@@ -21,7 +21,9 @@ public:
     /** Stop and deinit tunnel */
     void deinit() override;
     /** Return EVUTIL_INVALID_SOCKET */
-    evutil_socket_t get_fd();
+    evutil_socket_t get_fd() override;
+    /** Get interface name */
+    std::string get_name() override;
 
     VpnWinTunnel() = default;
     ~VpnWinTunnel() override;

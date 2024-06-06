@@ -34,6 +34,10 @@ void ag::VpnMacTunnel::deinit() {
     close(m_tun_fd);
 }
 
+std::string ag::VpnMacTunnel::get_name() {
+    return m_tun_name;
+}
+
 evutil_socket_t ag::VpnMacTunnel::get_fd() {
     return m_tun_fd;
 }

@@ -111,6 +111,9 @@ public:
     /** Get file descriptor */
     virtual evutil_socket_t get_fd() = 0;
 
+    /** Get interface name */
+    virtual std::string get_name() = 0;
+
 #ifdef _WIN32
 
     /** Start receiving packets */
@@ -150,6 +153,8 @@ public:
     VpnError init(const VpnOsTunnelSettings *settings) override;
     /** Get file descriptor */
     evutil_socket_t get_fd() override;
+    /** Get interface name */
+    std::string get_name() override;
     /** Stop and deinit tunnel */
     void deinit() override;
     ~VpnLinuxTunnel() override = default;
@@ -171,6 +176,8 @@ public:
     VpnError init(const VpnOsTunnelSettings *settings) override;
     /** Get file descriptor */
     evutil_socket_t get_fd() override;
+    /** Get interface name */
+    std::string get_name() override;
     /** Stop and deinit tunnel */
     void deinit() override;
     ~VpnMacTunnel() override = default;

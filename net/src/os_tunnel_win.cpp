@@ -11,6 +11,7 @@
 #include <winsock2.h>
 #include <winternl.h>
 #include <ws2ipdef.h>
+#include <netioapi.h>
 
 #include "common/utils.h"
 #include "net/network_manager.h"
@@ -449,6 +450,12 @@ void ag::VpnWinTunnel::deinit() {
 
 evutil_socket_t ag::VpnWinTunnel::get_fd() {
     return EVUTIL_INVALID_SOCKET;
+}
+
+std::string ag::VpnWinTunnel::get_name() {
+    char buf[IF_NAMESIZE + 1] = "";
+    char *res = if_indextoname(m_if_index, buf);
+    return res ? res : "";
 }
 
 void ag::VpnWinTunnel::start_recv_packets(

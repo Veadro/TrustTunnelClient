@@ -41,6 +41,10 @@ evutil_socket_t ag::VpnLinuxTunnel::get_fd() {
     return m_tun_fd;
 }
 
+std::string ag::VpnLinuxTunnel::get_name() {
+    return m_tun_name;
+}
+
 evutil_socket_t ag::VpnLinuxTunnel::tun_open() {
     evutil_socket_t fd = open("/dev/net/tun", O_RDWR);
 
