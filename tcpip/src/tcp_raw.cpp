@@ -171,10 +171,12 @@ static err_t process_recv_event(TcpConnDescriptor *conn, struct pbuf *buffer) {
 
 static err_t tcp_raw_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
     auto *ctx = (ConnCtx *) arg;
+    auto *tcpip = ctx->tcpip;
+    auto id = ctx->id;
 
-    auto *conn = (TcpConnDescriptor *) tcpip_get_connection_by_id(&ctx->tcpip->tcp.connections, ctx->id);
+    auto *conn = (TcpConnDescriptor *) tcpip_get_connection_by_id(&tcpip->tcp.connections, id);
     if (conn == nullptr) {
-        warnlog(ctx->tcpip->tcp.log, "Connection not found: id={}", ctx->id);
+        warnlog(tcpip->tcp.log, "Connection not found: id={}", id);
         tcp_abort(tpcb);
         return ERR_ABRT;
     }
@@ -191,7 +193,8 @@ static err_t tcp_raw_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t
         pbuf_free(p);
     } else {
         result = process_recv_event(conn, p);
-        log_conn(conn, trace, "Result = {}", result);
+        // Conn may be destructed here
+        tracelog(tcpip->tcp.log, "[id={}] Result = {}", id, result);
     }
 
     return result;
