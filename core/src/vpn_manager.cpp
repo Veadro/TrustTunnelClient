@@ -335,6 +335,21 @@ void vpn_force_reconnect(Vpn *vpn) {
     log_vpn(vpn, info, "Done");
 }
 
+void vpn_force_disconnect(Vpn *vpn, bool fatal_connectivity_error) {
+    log_vpn(vpn, info, "...");
+
+    std::unique_lock l(vpn->stop_guard);
+
+    vpn->submit([vpn, fatal_connectivity_error]() {
+        if (fatal_connectivity_error) {
+            vpn->pending_error = {.code = VPN_EC_FATAL_CONNECTIVITY_ERROR, .text = "Fatal connectivity error occurred"};
+        }
+        shutdown_cb(vpn);
+    });
+
+    log_vpn(vpn, info, "Done");
+}
+
 VpnError vpn_listen(Vpn *vpn, VpnListener *listener_, const VpnListenerConfig *config) {
     log_vpn(vpn, info, "...");
 

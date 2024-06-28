@@ -41,10 +41,15 @@ typedef enum {
     VPN_EC_INVALID_SETTINGS,       // Settings passed for an operation are invalid
     VPN_EC_ADDR_IN_USE,            // Operation failed because the specified address was in use
     VPN_EC_INVALID_STATE,          // VPN client instance is in invalid state for the requested operation
+    // Recoverable runtime errors. Client may update data from backend and reconnect.
     VPN_EC_AUTH_REQUIRED,          // Authorization error (in case user credentials are invalid or expired)
     VPN_EC_LOCATION_UNAVAILABLE,   // None of the endpoints in a location are available
+    // Unrecoverable runtime errors. Client should NOT reconnect automatically.
     VPN_EC_EVENT_LOOP_FAILURE,     // Failed to start the IO event loop, or it unexpectedly terminated
     VPN_EC_INITIAL_CONNECT_FAILED, // No connection attempts left after initial connect() call
+    VPN_EC_FATAL_CONNECTIVITY_ERROR, // Fired after ConnectivityError callback with fatal error code (e.g. too many devices)
+                                     // In this case client should not reconnect automatically, and instead show user an error
+                                     // And properly tear down both tunnel and VPN client.
 } VpnErrorCode;
 
 typedef struct Vpn Vpn;
@@ -566,6 +571,13 @@ WIN_EXPORT ag::VpnError vpn_connect(Vpn *vpn, const VpnConnectParameters *parame
  * @param vpn VPN client
  */
 WIN_EXPORT void vpn_force_reconnect(Vpn *vpn);
+
+/**
+ * Forcibly turn VPN state to disconnected without stopping it, as if internal error occurred.
+ * @param vpn VPN client
+ * @param fatal_connectivity_error Fatal connectivity error occurred.
+ */
+WIN_EXPORT void vpn_force_disconnect(Vpn *vpn, bool fatal_connectivity_error);
 
 /**
  * Start listening for client connections.
