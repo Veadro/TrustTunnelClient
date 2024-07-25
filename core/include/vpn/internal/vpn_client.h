@@ -11,6 +11,8 @@
 #include "net/locations_pinger.h"
 #include "net/network_manager.h"
 #include "net/utils.h"
+#include "net/tcp_socket.h"
+#include "net/quic_connector.h"
 #include "vpn/event_loop.h"
 #include "vpn/fsm.h"
 #include "vpn/internal/client_listener.h"
@@ -165,6 +167,10 @@ public:
     sockaddr_storage socks_listener_address{}; // The address the SOCKS listener is bound to
     bool bypass_upstream_session_opened = false;
     bool in_disconnect = false;
+
+    // One of these is handed off from the pinger. An upstream can then snatch it up.
+    ag::DeclPtr<QuicConnector, &quic_connector_destroy> quic_connector;
+    ag::DeclPtr<TcpSocket, &tcp_socket_destroy> tcp_socket;
 };
 
 } // namespace ag

@@ -318,6 +318,7 @@ void UpstreamMultiplexer::finalize_closed_upstream(int upstream_id, bool async) 
     }
 
     log_mux(this, dbg, "All child upstreams are closed");
+    m_timeout_timer.reset();
     if (m_pending_error.has_value()) {
         ServerError error = {NON_ID, std::exchange(m_pending_error, std::nullopt).value()};
         this->handler.func(this->handler.arg, SERVER_EVENT_ERROR, &error);

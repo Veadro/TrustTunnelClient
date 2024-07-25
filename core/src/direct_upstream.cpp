@@ -330,7 +330,7 @@ void DirectUpstream::close_connection(uint64_t id, bool graceful, bool async) {
     if (auto tcp_node = m_tcp_connections.extract(id); !tcp_node.empty()) {
         TcpConnection *conn = &tcp_node.mapped();
         if (!graceful && conn->socket != nullptr) {
-            tcp_socket_set_rst(conn->socket.get());
+            tcp_socket_set_rst(conn->socket.get(), true);
         }
     } else if (auto udp_iter = m_udp_connections.find(id); udp_iter != m_udp_connections.end()) {
         m_udp_connections.erase(udp_iter);

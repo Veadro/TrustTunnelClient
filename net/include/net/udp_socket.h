@@ -59,6 +59,17 @@ VpnError udp_socket_write(UdpSocket *socket, const uint8_t *data, size_t length)
 evutil_socket_t udp_socket_get_fd(const UdpSocket *socket);
 
 /**
+ * Dissociate `socket` with its file descriptor and return
+ * the file descriptor while destroying the socket.
+ */
+evutil_socket_t udp_socket_release_fd(UdpSocket *socket);
+
+/**
+ * Create a UDP socket that wraps an existing datagram socket file descriptor.
+ */
+UdpSocket *udp_socket_acquire_fd(const UdpSocketParameters *parameters, evutil_socket_t fd);
+
+/**
  * Read from the underlying fd.
  * @return the number of bytes received, or a negative number if an error occurred.
  */

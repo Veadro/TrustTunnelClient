@@ -5,13 +5,17 @@
 #include <cassert>
 #include <cstddef>
 #include <cstring>
+#include <list>
+#include <variant>
 #include <vector>
 
 #include <event2/buffer.h>
 #include <event2/bufferevent.h>
 #include <event2/bufferevent_ssl.h>
 #include <event2/util.h>
+#include <openssl/bio.h>
 #include <openssl/err.h>
+#include <openssl/ssl.h>
 
 #include "common/logger.h"
 #include "common/net_utils.h"
@@ -35,9 +39,11 @@ static Logger g_logger{"TCP_SOCKET"};
 static const size_t MAX_WRITE_BUFFER_LEN = 128 * 1024;
 static const size_t MAX_READ_SIZE = 128 * 1024;
 
+static const size_t SSL_READ_SIZE = 4096;
+
 static std::atomic_int g_next_id = 0; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-typedef enum {
+enum SocketFlags : uint32_t {
     /**
      * evdns may raise callbacks synchronously, but it's not obvious and error-prone
      * behaviour. This flag is needed to work around it and return an error from `tcp_connect`
@@ -48,7 +54,14 @@ typedef enum {
     SF_RST_SET = 1 << 1,
     /** Received */
     SF_GOT_EOF = 1 << 2,
-} SocketFlags;
+    /** Pause TLS handshake on receipt of the first data chunk from the server */
+    SF_PAUSE_TLS = 1 << 3,
+};
+
+struct SslBuf {
+    uint8_t data[SSL_READ_SIZE];
+    size_t size;
+};
 
 struct TcpSocket {
     struct bufferevent *bev;
@@ -56,8 +69,9 @@ struct TcpSocket {
     char log_id[11 + SOCKADDR_STR_BUF_SIZE];
     int id;
     TaskId complete_read_task_id;
-    int flags; // see `SocketFlags`
-    SSL *ssl;
+    uint32_t flags; // see `SocketFlags`
+    ag::DeclPtr<SSL, &SSL_free> ssl;
+    std::list<SslBuf> ssl_pending;
     VpnError pending_connect_error; // buffer for synchronously raised error (see `SF_CONNECT_CALLED`)
 };
 
@@ -66,7 +80,8 @@ static void on_read(struct bufferevent *, void *);
 static void on_write_flush(struct bufferevent *, TcpSocket *ctx);
 static void on_event(struct bufferevent *, short, void *);
 static void on_sent_event(struct evbuffer *buf, const struct evbuffer_cb_info *info, void *arg);
-static struct bufferevent *create_bufferevent(TcpSocket *sock, const struct sockaddr *dst, SSL *ssl, bool anti_dpi);
+static struct bufferevent *create_bufferevent(TcpSocket *sock, const struct sockaddr *dst, bool anti_dpi);
+static VpnError do_handshake(TcpSocket *socket);
 
 #ifdef _WIN32
 
@@ -111,10 +126,7 @@ static void socket_clean_up(TcpSocket *socket) {
         socket->bev = nullptr;
     }
 
-    if (socket->ssl != nullptr) {
-        SSL_free(socket->ssl);
-        socket->ssl = nullptr;
-    }
+    socket->ssl.reset();
 
     delete socket;
 }
@@ -170,8 +182,12 @@ clean_up:
     socket_clean_up(socket);
 }
 
-void tcp_socket_set_rst(TcpSocket *socket) {
-    socket->flags |= SF_RST_SET;
+void tcp_socket_set_rst(TcpSocket *socket, bool rst) {
+    if (rst) {
+        socket->flags |= SF_RST_SET;
+    } else {
+        socket->flags &= ~SF_RST_SET;
+    }
 }
 
 static void complete_read(void *arg, TaskId task_id) {
@@ -192,7 +208,10 @@ void tcp_socket_set_read_enabled(TcpSocket *socket, bool flag) {
         // Doing it manually, because bufferevent will not trigger read events, unless
         // new data was received.
         const struct evbuffer *buffer = bufferevent_get_input(bev);
-        if (socket->complete_read_task_id < 0 && (evbuffer_get_length(buffer) > 0 || (socket->flags & SF_GOT_EOF))) {
+        if (socket->complete_read_task_id < 0
+                && (evbuffer_get_length(buffer) > 0 || (socket->flags & SF_GOT_EOF)
+                        || socket->ssl // Reuse the complete_read task for driving the handshake.
+                        || !socket->ssl_pending.empty())) {
             socket->complete_read_task_id =
                     vpn_event_loop_submit(socket->parameters.ev_loop, {socket, complete_read, nullptr});
             if (0 > socket->complete_read_task_id) {
@@ -202,6 +221,10 @@ void tcp_socket_set_read_enabled(TcpSocket *socket, bool flag) {
         }
     } else {
         bufferevent_disable(bev, EV_READ);
+        if (socket->complete_read_task_id >= 0) {
+            vpn_event_loop_cancel(socket->parameters.ev_loop, socket->complete_read_task_id);
+            socket->complete_read_task_id = -1;
+        }
     }
 }
 
@@ -237,6 +260,59 @@ static void on_read(struct bufferevent *bev, void *ctx) {
 
     tcp_socket_set_timeout(socket, socket->parameters.timeout);
 
+    const TcpSocketHandler &handler = socket->parameters.handler;
+    if (socket->ssl) {
+        VpnError error;
+
+        if (!SSL_is_init_finished(socket->ssl.get())) {
+            error = do_handshake(socket);
+            if (error.code != 0) {
+                handler.handler(handler.arg, TCP_SOCKET_EVENT_ERROR, &error);
+                return;
+            }
+            if (!SSL_is_init_finished(socket->ssl.get())) {
+                return;
+            }
+        }
+
+        // Handshake finished, report "connected".
+        tcp_socket_set_read_enabled(socket, false);
+
+        for (;;) {
+            SslBuf &buf = socket->ssl_pending.emplace_back();
+            int ret = SSL_read(socket->ssl.get(), buf.data, sizeof(buf.data));
+            if (ret <= 0) {
+                socket->ssl_pending.pop_back();
+                int ssl_error = SSL_get_error(socket->ssl.get(), ret);
+                if (ssl_error != SSL_ERROR_WANT_READ) {
+                    error = {.code = ssl_error, .text = ERR_error_string(ssl_error, nullptr)};
+                    handler.handler(handler.arg, TCP_SOCKET_EVENT_ERROR, &error);
+                    return;
+                }
+                break;
+            }
+            buf.size = ret;
+        }
+
+        bufferevent *bev_ssl =
+                bufferevent_openssl_filter_new(vpn_event_loop_get_base(socket->parameters.ev_loop), socket->bev,
+                        socket->ssl.release(), BUFFEREVENT_SSL_OPEN, BEV_OPT_DEFER_CALLBACKS | BEV_OPT_CLOSE_ON_FREE);
+        if (!bev_ssl) {
+            error = {.code = -1, .text = "bufferevent_openssl_filter_new failed"};
+            handler.handler(handler.arg, TCP_SOCKET_EVENT_ERROR, &error);
+            return;
+        }
+        socket->bev = bev_ssl;
+        bufferevent_setcb(socket->bev, on_read, (bufferevent_data_cb) on_write_flush, on_event, socket);
+        evbuffer_add_cb(bufferevent_get_output(socket->bev), &on_sent_event, (void *) socket);
+        if (socket->parameters.read_threshold > 0) {
+            bufferevent_setwatermark(socket->bev, EV_READ, 0, socket->parameters.read_threshold);
+        }
+
+        handler.handler(handler.arg, TCP_SOCKET_EVENT_CONNECTED, nullptr);
+        return;
+    }
+
     bool readable = bufferevent_get_enabled(bev) & EV_READ;
     if (!readable) {
         // Check if another side switched off the read events before `complete_read` fired
@@ -244,7 +320,6 @@ static void on_read(struct bufferevent *bev, void *ctx) {
         return;
     }
 
-    const TcpSocketHandler &handler = socket->parameters.handler;
     handler.handler(handler.arg, TCP_SOCKET_EVENT_READABLE, nullptr);
 }
 
@@ -345,6 +420,14 @@ static void on_connect_event(struct bufferevent *, short what, TcpSocket *ctx) {
             }
         }
 #endif // _WIN32
+
+        if (socket->ssl) {
+            SSL_set_connect_state(socket->ssl.get());
+            SSL_set0_rbio(socket->ssl.get(), BIO_new(BIO_s_mem()));
+            SSL_set0_wbio(socket->ssl.get(), BIO_new(BIO_s_mem()));
+            e = do_handshake(socket);
+            tcp_socket_set_read_enabled(socket, true);
+        }
     } else if (what & BEV_EVENT_TIMEOUT) {
         e = {utils::AG_ETIMEDOUT, evutil_socket_error_to_string(utils::AG_ETIMEDOUT)};
     } else {
@@ -355,7 +438,9 @@ static void on_connect_event(struct bufferevent *, short what, TcpSocket *ctx) {
     }
 
     if (e.code == 0) {
-        callbacks->handler(callbacks->arg, TCP_SOCKET_EVENT_CONNECTED, nullptr);
+        if (!socket->ssl) {
+            callbacks->handler(callbacks->arg, TCP_SOCKET_EVENT_CONNECTED, nullptr);
+        }
     } else if (socket->flags & SF_CONNECT_CALLED) {
         socket->pending_connect_error = e;
     } else {
@@ -402,18 +487,12 @@ fail:
 }
 
 static const std::unique_ptr<ev_token_bucket_cfg, ag::Ftor<&ev_token_bucket_cfg_free>> RATE_LIMIT_ANTIDPI{
-        ev_token_bucket_cfg_new(
-                EV_RATE_LIMIT_MAX, EV_RATE_LIMIT_MAX,
-                DPI_SPLIT_SIZE, DPI_SPLIT_SIZE,
-                std::array<timeval, 1>{ms_to_timeval(DPI_COOLDOWN_TIME.count())}.data())
-};
+        ev_token_bucket_cfg_new(EV_RATE_LIMIT_MAX, EV_RATE_LIMIT_MAX, DPI_SPLIT_SIZE, DPI_SPLIT_SIZE,
+                std::array<timeval, 1>{ms_to_timeval(DPI_COOLDOWN_TIME.count())}.data())};
 
 static const std::unique_ptr<ev_token_bucket_cfg, ag::Ftor<&ev_token_bucket_cfg_free>> RATE_LIMIT_UNLIMITED{
-        ev_token_bucket_cfg_new(
-                EV_RATE_LIMIT_MAX, EV_RATE_LIMIT_MAX,
-                EV_RATE_LIMIT_MAX, EV_RATE_LIMIT_MAX,
-                std::array<timeval, 1>{ms_to_timeval(DPI_COOLDOWN_TIME.count())}.data())
-};
+        ev_token_bucket_cfg_new(EV_RATE_LIMIT_MAX, EV_RATE_LIMIT_MAX, EV_RATE_LIMIT_MAX, EV_RATE_LIMIT_MAX,
+                std::array<timeval, 1>{ms_to_timeval(DPI_COOLDOWN_TIME.count())}.data())};
 
 static void on_rate_limited_write(struct evbuffer *, const struct evbuffer_cb_info *info, void *arg) {
     if (info->n_deleted > 0) {
@@ -428,7 +507,7 @@ static void on_rate_limited_write(struct evbuffer *, const struct evbuffer_cb_in
     }
 }
 
-static struct bufferevent *create_bufferevent(TcpSocket *sock, const struct sockaddr *dst, SSL *ssl, bool anti_dpi) {
+static struct bufferevent *create_bufferevent(TcpSocket *sock, const struct sockaddr *dst, bool anti_dpi) {
     struct bufferevent *bev = nullptr;
     SocketProtectEvent event;
     const TcpSocketHandler *callbacks = &sock->parameters.handler;
@@ -443,7 +522,7 @@ static struct bufferevent *create_bufferevent(TcpSocket *sock, const struct sock
         goto fail;
     }
 
-    if (!sockaddr_is_loopback(dst)) {
+    if (dst && !sockaddr_is_loopback(dst)) {
         event = {fd, dst, 0};
         callbacks->handler(callbacks->arg, TCP_SOCKET_EVENT_PROTECT, &event);
         if (event.result != 0) {
@@ -472,17 +551,9 @@ static struct bufferevent *create_bufferevent(TcpSocket *sock, const struct sock
         goto fail;
     }
 
-    if (ssl != nullptr) {
-        if (anti_dpi) {
-            bufferevent_set_rate_limit(bev, RATE_LIMIT_ANTIDPI.get());
-            evbuffer_add_cb(bufferevent_get_output(bev), on_rate_limited_write, (void *) bev);
-        }
-        bufferevent *ssl_bev = bufferevent_openssl_filter_new(base, bev, ssl, BUFFEREVENT_SSL_CONNECTING, options);
-        if (ssl_bev == nullptr) {
-            log_sock(sock, err, "Failed to create SSL bufferevent");
-            goto fail;
-        }
-        bev = ssl_bev;
+    if (anti_dpi) {
+        bufferevent_set_rate_limit(bev, RATE_LIMIT_ANTIDPI.get());
+        evbuffer_add_cb(bufferevent_get_output(bev), on_rate_limited_write, (void *) bev);
     }
 
     tv = ms_to_timeval(uint32_t(sock->parameters.timeout.count()));
@@ -508,7 +579,6 @@ fail:
 
 VpnError tcp_socket_connect(TcpSocket *socket, const TcpSocketConnectParameters *param) {
     socket->flags |= SF_CONNECT_CALLED;
-    socket->ssl = param->ssl;
 
     VpnError error = {};
     int ret;
@@ -518,10 +588,8 @@ VpnError tcp_socket_connect(TcpSocket *socket, const TcpSocketConnectParameters 
         sockaddr_to_str(param->peer, buf, sizeof(buf));
         snprintf(socket->log_id, sizeof(socket->log_id), LOG_ID_PREADDR_FMT "%s", socket->id, buf);
 
-        socket->bev = create_bufferevent(socket, param->peer, param->ssl, param->anti_dpi);
-        if (socket->bev != nullptr) {
-            socket->ssl = nullptr;
-        } else {
+        socket->bev = create_bufferevent(socket, param->peer, (param->ssl && param->anti_dpi));
+        if (socket->bev == nullptr) {
             goto fail;
         }
     }
@@ -551,6 +619,12 @@ fail:
     }
 
 exit:
+    if (error.code == 0) {
+        socket->ssl.reset(param->ssl);
+        if (param->pause_tls) {
+            socket->flags |= SF_PAUSE_TLS;
+        }
+    }
     socket->flags &= ~SF_CONNECT_CALLED;
     socket->pending_connect_error = {};
     return error;
@@ -595,6 +669,10 @@ int make_fd_dual_stack(evutil_socket_t fd) {
 }
 
 tcp_socket::PeekResult tcp_socket_peek(TcpSocket *self) {
+    if (!self->ssl_pending.empty()) {
+        return tcp_socket::Chunk{self->ssl_pending.front().data, self->ssl_pending.front().size};
+    }
+
     evbuffer_iovec chunk = {};
     if (0 < evbuffer_peek(bufferevent_get_input(self->bev), -1, nullptr, &chunk, 1) && chunk.iov_len > 0) {
         return tcp_socket::Chunk{(uint8_t *) chunk.iov_base, chunk.iov_len};
@@ -608,6 +686,17 @@ tcp_socket::PeekResult tcp_socket_peek(TcpSocket *self) {
 }
 
 bool tcp_socket_drain(TcpSocket *self, size_t n) {
+    while (!self->ssl_pending.empty() && n > 0) {
+        SslBuf &buf = self->ssl_pending.front();
+        if (n >= buf.size) {
+            n -= buf.size;
+            self->ssl_pending.pop_front();
+        } else {
+            buf.size -= n;
+            std::memmove(buf.data, buf.data + n, buf.size);
+            break;
+        }
+    }
     return (n == 0) || (self->bev != nullptr && 0 == evbuffer_drain(bufferevent_get_input(self->bev), n));
 }
 
@@ -993,5 +1082,104 @@ done:
 }
 
 #endif // _WIN32
+
+VpnError do_handshake(TcpSocket *socket) {
+    size_t bio_written = 0;
+    for (;;) {
+        tcp_socket::PeekResult result = tcp_socket_peek(socket);
+        if (std::holds_alternative<tcp_socket::NoData>(result)) {
+            break;
+        }
+        if (std::holds_alternative<tcp_socket::Eof>(result)) {
+            return {.code = -1, .text = "Unexpected EOF during TLS handshake"};
+        }
+        assert(std::holds_alternative<tcp_socket::Chunk>(result));
+        auto chunk = std::get<tcp_socket::Chunk>(result);
+
+        int ret = BIO_write(SSL_get_rbio(socket->ssl.get()), chunk.data(), chunk.size());
+        if (ret < 0) {
+            return {.code = -1, .text = "BIO_write failed"};
+        }
+        bio_written += ret;
+        tcp_socket_drain(socket, ret);
+    }
+
+    if ((socket->flags & SF_PAUSE_TLS) && bio_written) {
+        socket->flags &= ~SF_PAUSE_TLS;
+
+        tcp_socket_set_read_enabled(socket, false);
+        bufferevent_set_timeouts(socket->bev, nullptr, nullptr);
+        bufferevent_setcb(socket->bev, nullptr, nullptr, nullptr, nullptr);
+
+        const TcpSocketHandler &handler = socket->parameters.handler;
+        handler.handler(handler.arg, TCP_SOCKET_EVENT_CONNECTED, nullptr);
+
+        return {};
+    }
+
+    if (int ret = SSL_do_handshake(socket->ssl.get()); ret <= 0) {
+        int error = SSL_get_error(socket->ssl.get(), ret);
+        if ((error != SSL_ERROR_WANT_READ) && (error != SSL_ERROR_WANT_WRITE)) {
+            return {.code = error, .text = ERR_error_string(error, nullptr)};
+        }
+    }
+
+    for (;;) {
+        uint8_t buf[SSL_READ_SIZE];
+        int ret = BIO_read(SSL_get_wbio(socket->ssl.get()), buf, sizeof(buf));
+        if (ret < 0) {
+            if (BIO_should_retry(SSL_get_wbio(socket->ssl.get()))) {
+                break;
+            }
+            return {.code = -1, .text = "BIO_read failed"};
+        }
+        if (ret == 0) {
+            break;
+        }
+        VpnError e = tcp_socket_write(socket, buf, ret);
+        if (e.code != 0) {
+            return e;
+        }
+    }
+
+    return {};
+}
+
+VpnError tcp_socket_connect_continue(TcpSocket *socket, const TcpSocketParameters *params) {
+    if (!socket->ssl) {
+        return {.code = -1, .text = "Wrong socket state"};
+    }
+
+    TcpSocketParameters old_params = socket->parameters;
+    socket->parameters = *params;
+
+    evutil_socket_t fd = bufferevent_getfd(socket->bev);
+    ag::DeclPtr<bufferevent, &bufferevent_free> bufev{wrap_fd(socket, fd)};
+    if (!bufev) {
+        socket->parameters = old_params;
+        return {.code = -1, .text = "Failed to create a new bufferevent"};
+    }
+
+    bufferevent_setfd(socket->bev, -1);
+    bufferevent_free(socket->bev);
+    socket->bev = bufev.release();
+
+    bufferevent_setcb(socket->bev, on_read, (bufferevent_data_cb) on_write_flush, on_event, socket);
+    evbuffer_add_cb(bufferevent_get_output(socket->bev), &on_sent_event, socket);
+
+    if (socket->parameters.read_threshold > 0) {
+        bufferevent_setwatermark(socket->bev, EV_READ, 0, socket->parameters.read_threshold);
+    }
+
+    tcp_socket_set_read_enabled(socket, true);
+    return do_handshake(socket);
+}
+
+SSL *tcp_socket_get_ssl(TcpSocket *socket) {
+    if (socket->ssl) {
+        return socket->ssl.get();
+    }
+    return bufferevent_openssl_get_ssl(socket->bev);
+}
 
 } // namespace ag

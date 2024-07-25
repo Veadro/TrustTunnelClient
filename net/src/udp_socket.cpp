@@ -1,6 +1,7 @@
 #include "net/udp_socket.h"
 
 #include <atomic>
+#include <utility>
 
 #include <event2/event.h>
 #include <event2/util.h>
@@ -49,8 +50,8 @@ static void event_handler(evutil_socket_t, short what, void *arg) {
     auto *sock = (UdpSocket *) arg;
 
     if (what & EV_READ) {
-        sock->parameters.handler.func(sock->parameters.handler.arg, UDP_SOCKET_EVENT_READABLE, nullptr);
         sock->timeout_ts = get_next_timeout_ts(sock);
+        sock->parameters.handler.func(sock->parameters.handler.arg, UDP_SOCKET_EVENT_READABLE, nullptr);
     } else if (what & EV_TIMEOUT) {
         log_sock(sock, dbg, "Timed out");
         sock->parameters.handler.func(sock->parameters.handler.arg, UDP_SOCKET_EVENT_TIMEOUT, nullptr);
@@ -68,7 +69,20 @@ static void timer_callback(void *arg, struct timeval now) {
     }
 }
 
-UdpSocket *udp_socket_create(const UdpSocketParameters *parameters) {
+static int get_sock_type(evutil_socket_t fd) {
+#ifdef _WIN32
+    DWORD type;
+#else
+    int type;
+#endif
+    socklen_t len = sizeof(type);
+    if (!getsockopt(fd, SOL_SOCKET, SO_TYPE, (char *) &type, &len)) {
+        return type;
+    }
+    return -1;
+}
+
+static UdpSocket *udp_socket_create_inner(const UdpSocketParameters *parameters, evutil_socket_t fd, bool create_fd) {
     static_assert(std::is_trivial_v<UdpSocket>);
     auto sock = (UdpSocket *) calloc(1, sizeof(UdpSocket));
     if (sock == nullptr) {
@@ -82,10 +96,20 @@ UdpSocket *udp_socket_create(const UdpSocketParameters *parameters) {
     snprintf(sock->log_id, sizeof(sock->log_id), "id=%d/%s", g_next_id.fetch_add(1), buf);
 
     const struct sockaddr *peer = (struct sockaddr *) &sock->parameters.peer;
-    evutil_socket_t fd = socket(peer->sa_family, SOCK_DGRAM, 0);
     if (fd < 0) {
-        int err = evutil_socket_geterror(fd);
-        log_sock(sock, err, "Failed to create socket: {} ({})", evutil_socket_error_to_string(err), err);
+        if (create_fd) {
+            fd = socket(peer->sa_family, SOCK_DGRAM, 0);
+            if (fd < 0) {
+                int err = evutil_socket_geterror(fd);
+                log_sock(sock, err, "Failed to create socket: {} ({})", evutil_socket_error_to_string(err), err);
+                goto fail;
+            }
+        } else {
+            log_sock(sock, err, "Can't wrap an invalid fd {}", fd);
+            goto fail;
+        }
+    } else if (get_sock_type(fd) != SOCK_DGRAM) {
+        log_sock(sock, err, "Can't wrap a non-datagram fd {}", fd);
         goto fail;
     }
     {
@@ -152,6 +176,14 @@ fail:
 
 exit:
     return sock;
+}
+
+UdpSocket *udp_socket_create(const UdpSocketParameters *parameters) {
+    return udp_socket_create_inner(parameters, -1, /*create_fd*/ true);
+}
+
+UdpSocket *udp_socket_acquire_fd(const UdpSocketParameters *parameters, evutil_socket_t fd) {
+    return udp_socket_create_inner(parameters, fd, /*create_fd*/ false);
 }
 
 void udp_socket_destroy(UdpSocket *socket) {
@@ -243,6 +275,13 @@ void udp_socket_set_timeout(UdpSocket *socket, Millis timeout) {
     socket_manager_timer_unsubscribe(socket->parameters.socket_manager, socket->subscribe_id);
     socket->subscribe_id = socket_manager_timer_subscribe(socket->parameters.socket_manager, socket->parameters.ev_loop,
             uint32_t(socket->parameters.timeout.count()), timer_callback, socket);
+}
+
+evutil_socket_t udp_socket_release_fd(UdpSocket *socket) {
+    evutil_socket_t fd = event_get_fd(socket->event);
+    event_free(std::exchange(socket->event, nullptr));
+    udp_socket_destroy(socket);
+    return fd;
 }
 
 } // namespace ag

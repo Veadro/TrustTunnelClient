@@ -16,6 +16,7 @@
 #include "http_icmp_multiplexer.h"
 #include "http_udp_multiplexer.h"
 #include "net/udp_socket.h"
+#include "net/quic_connector.h"
 #include "vpn/internal/data_buffer.h"
 #include "vpn/internal/server_upstream.h"
 #include "vpn/utils.h"
@@ -93,6 +94,7 @@ private:
     bool m_in_handler = false;
     bool m_closed = false; // @todo: seems like it can be replaced by a separate state
     ag::Logger m_log{"H3_UPSTREAM"};
+    DeclPtr<QuicConnector, &quic_connector_destroy> m_quic_connector;
 
     /**
      * A point in time when our idle timer expires.
@@ -125,6 +127,7 @@ private:
 
     static void quic_timer_callback(evutil_socket_t, short, void *arg);
     static void socket_handler(void *arg, UdpSocketEvent what, void *data);
+    static void quic_connector_handler(void *arg, QuicConnectorEvent what, void *data);
     static int verify_callback(X509_STORE_CTX *store_ctx, void *arg);
 
     bool flush_pending_quic_data();
@@ -148,6 +151,7 @@ private:
     void poll_tcp_connections();
     void poll_connections();
     void retry_connect_requests();
+    bool continue_connecting();
     static void complete_read(void *arg, TaskId task_id);
     static std::optional<uint64_t> mux_send_connect_request_callback(
             ServerUpstream *upstream, const TunnelAddress *dst_addr, std::string_view app_name);

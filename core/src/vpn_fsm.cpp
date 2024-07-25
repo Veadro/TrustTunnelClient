@@ -194,6 +194,12 @@ static void pinger_handler(void *arg, const LocationsPingerResult *result) {
                     : "none",
             result->ping_ms);
 
+    if (result->is_quic) {
+        vpn->client.quic_connector.reset((QuicConnector *) result->conn_state);
+    } else {
+        vpn->client.tcp_socket.reset((TcpSocket *) result->conn_state);
+    }
+
     const auto *extra_result = (LocationsPingerResultExtra *) result;
     vpn->client.update_bypass_ip_availability(extra_result->ip_availability);
 
@@ -266,12 +272,20 @@ static void run_ping(void *ctx, void *) {
 
     vpn->stop_pinging();
 
+    uint32_t quic_max_idle_timeout =
+            2 * (vpn->upstream_config->timeout_ms + vpn->upstream_config->health_check_timeout_ms);
+    uint32_t quic_version =
+            vpn->upstream_config->protocol.type == VPN_UP_HTTP3 ? vpn->upstream_config->protocol.http3.quic_version : 0;
+
     LocationsPingerInfo pinger_info = {
             .timeout_ms = vpn->upstream_config->location_ping_timeout_ms,
             .locations = {&vpn->upstream_config->location, 1},
             .rounds = 1,
             .use_quic = vpn->upstream_config->protocol.type == VPN_UP_HTTP3,
             .anti_dpi = vpn->upstream_config->anti_dpi,
+            .handoff = true,
+            .quic_max_idle_timeout_ms = quic_max_idle_timeout,
+            .quic_version = quic_version,
     };
 
     // Speed up recovery if we have already connected through a relay by pinging through the relay in parallel.
@@ -311,6 +325,7 @@ static void complete_connect(void *ctx, void *data) {
     }
 
     vpn->recovery = {};
+    vpn->client.do_health_check();
 
     log_vpn(vpn, trace, "Done");
 }

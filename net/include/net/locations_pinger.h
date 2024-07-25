@@ -34,8 +34,12 @@ typedef struct {
     // Use QUIC instead of TLS to ping the endpoints.
     // If a ping fails, the pinger will fall back to TLS for that endpoint.
     bool use_quic;
-    bool anti_dpi; // Enable anti-DPI measures.
+    bool anti_dpi;                          // Enable anti-DPI measures.
+    bool handoff;                           // For internal use. Applications should set this parameter to `false`.
+                                            // If `true`, pass the connection state with the ping result.
     const sockaddr *relay_address_parallel; // Ping through this relay in parallel with normal pings.
+    uint32_t quic_max_idle_timeout_ms;      // QUIC connection max idle timeout. Set `0` to use the default.
+    uint32_t quic_version;                  // QUIC version. Set `0` to use the default.
 } LocationsPingerInfo;
 
 typedef struct {
@@ -43,6 +47,9 @@ typedef struct {
     int ping_ms;    // selected endpoint's ping (negative if none of the location endpoints successfully pinged)
     const VpnEndpoint *endpoint;   // selected endpoint
     const sockaddr *relay_address; // if the selected endpoint was pinged through a relay, the relay's address
+    bool is_quic;                  // Whether the established connection is QUIC
+    void *conn_state;              // For internal use. Applications should ignore this field.
+                                   // If `handoff` is `true`, this is the connection state object.
 } LocationsPingerResult;
 
 struct LocationsPingerResultExtra : public LocationsPingerResult {

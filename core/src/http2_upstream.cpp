@@ -452,22 +452,37 @@ bool Http2Upstream::open_session(std::optional<Millis> timeout) {
             {net_handler, this},
             timeout.value_or(config->timeout),
             this->vpn->parameters.network_manager->socket,
-            0,
+            TCP_READ_THRESHOLD,
 #ifdef _WIN32
-            true,
+            TCP_RECORD_ESTATS,
 #endif // _WIN32
     };
+
+    if (this->vpn->tcp_socket) {
+        m_socket = std::move(this->vpn->tcp_socket);
+
+        SSL *ssl = tcp_socket_get_ssl(m_socket.get());
+        SSL_CTX_set_verify(SSL_get_SSL_CTX(ssl), SSL_VERIFY_PEER, nullptr);
+        SSL_CTX_set_cert_verify_callback(SSL_get_SSL_CTX(ssl), verify_callback, this);
+
+        tcp_socket_set_rst(m_socket.get(), false);
+
+        VpnError error = tcp_socket_connect_continue(m_socket.get(), &sock_params);
+        if (error.code == 0) {
+            return true;
+        }
+        log_upstream(this, dbg, "Failed to continue handed-off connection: ({}) {}", error.code, error.text);
+    }
+
     m_socket.reset(tcp_socket_create(&sock_params));
     if (m_socket == nullptr) {
         log_upstream(this, err, "Failed to create socket to server");
         return false;
     }
 
-    static constexpr uint8_t HTTP2_ALPN[] = {2, 'h', '2'};
-
     SslPtr ssl;
-    if (auto r = make_ssl(
-                verify_callback, this, {HTTP2_ALPN, std::size(HTTP2_ALPN)}, config->endpoint->name, /*quic*/ false);
+    if (auto r = make_ssl(verify_callback, this, {TCP_TLS_ALPN_PROTOS, std::size(TCP_TLS_ALPN_PROTOS)},
+                config->endpoint->name, /*quic*/ false);
             std::holds_alternative<SslPtr>(r)) {
         ssl = std::move(std::get<SslPtr>(r));
     } else {

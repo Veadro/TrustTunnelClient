@@ -106,9 +106,7 @@ TEST_F(SingleUpstreamConnectorTest, Successful) {
 
     m_upstream->handler.func(m_upstream->handler.arg, SERVER_EVENT_SESSION_OPENED, nullptr);
     this->run_event_loop_once();
-    ASSERT_TRUE(m_upstream->called_methods.do_health_check);
-
-    m_upstream->handler.func(m_upstream->handler.arg, SERVER_EVENT_HEALTH_CHECK_RESULT, nullptr);
+    ASSERT_FALSE(m_upstream->called_methods.do_health_check);
     ASSERT_TRUE(m_raised_result.has_value());
     ASSERT_TRUE(std::holds_alternative<std::unique_ptr<ServerUpstream>>(m_raised_result.value()))
             << m_raised_result->index();
@@ -130,38 +128,6 @@ TEST_F(SingleUpstreamConnectorTest, OpenSessionFailed) {
     m_upstream->handler.func(m_upstream->handler.arg, SERVER_EVENT_ERROR, &event);
     this->run_event_loop_once();
     ASSERT_FALSE(m_upstream->called_methods.do_health_check);
-    ASSERT_TRUE(m_raised_result.has_value());
-    ASSERT_TRUE(std::holds_alternative<VpnError>(m_raised_result.value())) << m_raised_result->index();
-}
-
-TEST_F(SingleUpstreamConnectorTest, HelthCheckStartFail) {
-    m_upstream->return_values.do_health_check = {-1, "test"};
-
-    VpnError err = m_connector->connect(std::nullopt);
-    ASSERT_EQ(err.code, VPN_EC_NOERROR) << err.text;
-    ASSERT_TRUE(m_upstream->called_methods.open_session);
-
-    m_upstream->handler.func(m_upstream->handler.arg, SERVER_EVENT_SESSION_OPENED, nullptr);
-    this->run_event_loop_once();
-    ASSERT_TRUE(m_upstream->called_methods.do_health_check);
-
-    m_upstream->handler.func(m_upstream->handler.arg, SERVER_EVENT_HEALTH_CHECK_RESULT, nullptr);
-    ASSERT_TRUE(m_raised_result.has_value());
-    ASSERT_TRUE(std::holds_alternative<VpnError>(m_raised_result.value())) << m_raised_result->index();
-}
-
-TEST_F(SingleUpstreamConnectorTest, HealthCheckFailed) {
-    VpnError err = m_connector->connect(std::nullopt);
-    ASSERT_EQ(err.code, VPN_EC_NOERROR) << err.text;
-    ASSERT_TRUE(m_upstream->called_methods.open_session);
-
-    m_upstream->handler.func(m_upstream->handler.arg, SERVER_EVENT_SESSION_OPENED, nullptr);
-    this->run_event_loop_once();
-    ASSERT_TRUE(m_upstream->called_methods.do_health_check);
-
-    err = {-1, "test"};
-    m_upstream->handler.func(m_upstream->handler.arg, SERVER_EVENT_HEALTH_CHECK_RESULT, &err);
-    this->run_event_loop_once();
     ASSERT_TRUE(m_raised_result.has_value());
     ASSERT_TRUE(std::holds_alternative<VpnError>(m_raised_result.value())) << m_raised_result->index();
 }

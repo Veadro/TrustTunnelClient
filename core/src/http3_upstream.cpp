@@ -8,6 +8,8 @@
 #include <openssl/rand.h>
 
 #include "net/http_session.h"
+#include "net/quic_connector.h"
+#include "net/udp_socket.h"
 #include "net/utils.h"
 #include "vpn/internal/vpn_client.h"
 #include "vpn/utils.h"
@@ -17,16 +19,6 @@
     lvl_##log((ups_)->m_log, "[{}] [R:{}] " fmt_, (ups_)->id, (uint64_t) (cid_), ##__VA_ARGS__)
 #define log_stream(ups_, sid_, lvl_, fmt_, ...)                                                                        \
     lvl_##log((ups_)->m_log, "[{}] [SID:{}] " fmt_, (ups_)->id, (uint64_t) (sid_), ##__VA_ARGS__)
-
-static constexpr size_t LOCAL_CONN_ID_LEN = 16;
-// synchronized with the endpoint config
-static constexpr uint64_t QUIC_CONNECTION_WINDOW_SIZE = 100ul * 1024 * 1024;
-// chosen empirically (looks like it works better than the Chrome default 6MB)
-static constexpr uint64_t STREAM_WINDOW_SIZE = 1ul * 1024 * 1024;
-// synchronized with the endpoint config
-static constexpr uint64_t MAX_STREAMS_NUM = 4ul * 1024;
-// synchronized with the endpoint config
-static constexpr size_t MAX_QUIC_UDP_PAYLOAD_SIZE = 1350;
 
 using namespace std::chrono;
 using namespace ag;
@@ -94,57 +86,23 @@ bool Http3Upstream::open_session(std::optional<Millis>) {
     }
 
     const vpn_client::EndpointConnectionConfig &upstream_config = this->vpn->upstream_config;
-    UdpSocketParameters params = {
-            .ev_loop = this->vpn->parameters.ev_loop,
-            .handler = {socket_handler, this},
-            .timeout = upstream_config.timeout,
-            .peer = upstream_config.endpoint->address,
-            .socket_manager = this->vpn->parameters.network_manager->socket,
-    };
-    m_socket.reset(udp_socket_create(&params));
-    if (m_socket == nullptr) {
-        log_upstream(this, err, "Failed to create UDP socket for connection");
-        return false;
-    }
-
-    const VpnHttp3UpstreamConfig &h3_upstream_config = this->PROTOCOL_CONFIG->http3;
-    quiche_config *config = quiche_config_new(
-            (h3_upstream_config.quic_version == 0) ? QUICHE_PROTOCOL_VERSION : h3_upstream_config.quic_version);
-    if (config == nullptr) {
-        log_upstream(this, err, "Failed to create QUIC config");
-        return false;
-    }
-    DeclPtr<quiche_config, &quiche_config_free> config_holder{config};
+    const VpnHttp3UpstreamConfig &h3_config = this->PROTOCOL_CONFIG->http3;
 
     // Let the connection live long enough to perform a health check.
     m_max_idle_timeout = 2 * (upstream_config.timeout + upstream_config.health_check_timeout);
 
-    quiche_config_verify_peer(config, true);
-    quiche_config_set_application_protos(
-            config, (uint8_t *) QUICHE_H3_APPLICATION_PROTOCOL, strlen(QUICHE_H3_APPLICATION_PROTOCOL));
-    quiche_config_set_max_idle_timeout(config, duration_cast<milliseconds>(m_max_idle_timeout).count());
-    quiche_config_set_initial_max_data(config, QUIC_CONNECTION_WINDOW_SIZE);
-    quiche_config_set_initial_max_stream_data_bidi_local(config, STREAM_WINDOW_SIZE);
-    quiche_config_set_initial_max_stream_data_bidi_remote(config, STREAM_WINDOW_SIZE);
-    quiche_config_set_initial_max_stream_data_uni(config, STREAM_WINDOW_SIZE);
-    quiche_config_set_initial_max_streams_bidi(config, MAX_STREAMS_NUM);
-    quiche_config_set_initial_max_streams_uni(config, MAX_STREAMS_NUM);
-    quiche_config_set_max_recv_udp_payload_size(config, MAX_QUIC_UDP_PAYLOAD_SIZE);
-    quiche_config_set_max_send_udp_payload_size(config, MAX_QUIC_UDP_PAYLOAD_SIZE);
-    quiche_config_set_disable_active_migration(config, true);
-    quiche_config_set_max_connection_window(config, QUIC_CONNECTION_WINDOW_SIZE);
-    quiche_config_set_max_stream_window(config, STREAM_WINDOW_SIZE);
-
-    uint8_t scid[LOCAL_CONN_ID_LEN];
-    static_assert(std::size(scid) <= QUICHE_MAX_CONN_ID_LEN);
-    if (0 == RAND_bytes(scid, std::size(scid))) {
-        log_upstream(this, err, "Failed to generate connection ID");
-        assert(0);
+    if (this->vpn->quic_connector) {
+        m_quic_connector = std::move(this->vpn->quic_connector);
+        if (continue_connecting()) {
+            m_state = H3US_ESTABLISHING;
+            flush_pending_quic_data();
+            return true;
+        }
+        log_upstream(this, dbg, "Failed to continue handed-off connection");
     }
 
     SslPtr ssl;
-    if (auto r = make_ssl(verify_callback, this,
-                {(uint8_t *) QUICHE_H3_APPLICATION_PROTOCOL, std::size(QUICHE_H3_APPLICATION_PROTOCOL) - 1},
+    if (auto r = make_ssl(verify_callback, this, {QUIC_H3_ALPN_PROTOS, std::size(QUIC_H3_ALPN_PROTOS)},
                 upstream_config.endpoint->name, /*quic*/ true);
             std::holds_alternative<SslPtr>(r)) {
         ssl = std::move(std::get<SslPtr>(r));
@@ -153,26 +111,28 @@ bool Http3Upstream::open_session(std::optional<Millis>) {
         return false;
     }
 
-#if 0
-    if (char *ssl_keylog_file = getenv("SSLKEYLOGFILE")) {
-        static DeclPtr<std::FILE, &std::fclose> handle{std::fopen(ssl_keylog_file, "a")};
-        SSL_CTX_set_keylog_callback(SSL_get_SSL_CTX(ssl.get()), [] (const SSL *, const char *line) {
-            fprintf(handle.get(), "%s\n", line);
-            fflush(handle.get());
-        });
-    }
-#endif
-
-    sockaddr_storage local_address = local_sockaddr_from_fd(udp_socket_get_fd(m_socket.get()));
-    m_quic_conn.reset(quiche_conn_new_with_tls(scid, sizeof(scid), nullptr, 0, (sockaddr *) &local_address,
-            sockaddr_get_size((sockaddr *) &local_address), (sockaddr *) &upstream_config.endpoint->address,
-            sockaddr_get_size((sockaddr *) &upstream_config.endpoint->address), config, ssl.release(), false));
-    if (m_quic_conn == nullptr) {
-        log_upstream(this, err, "Failed to create QUIC connection");
+    QuicConnectorParameters quic_connector_prm{
+            .ev_loop = this->vpn->parameters.ev_loop,
+            .handler = {.handler = quic_connector_handler, .arg = this},
+            .socket_manager = this->vpn->parameters.network_manager->socket,
+    };
+    m_quic_connector.reset(quic_connector_create(&quic_connector_prm));
+    if (!m_quic_connector) {
+        log_upstream(this, err, "Failed to create a QUIC connector");
         return false;
     }
 
-    if (!this->flush_pending_quic_data()) {
+    QuicConnectorConnectParameters connect_prm{
+            .peer = (sockaddr *) &upstream_config.endpoint->address,
+            .ssl = ssl.release(),
+            .timeout = upstream_config.timeout,
+            .max_idle_timeout = m_max_idle_timeout,
+            .quic_version = (h3_config.quic_version == 0) ? QUICHE_PROTOCOL_VERSION : h3_config.quic_version,
+    };
+
+    VpnError error = quic_connector_connect(m_quic_connector.get(), &connect_prm);
+    if (error.code != 0) {
+        log_upstream(this, err, "Failed to start QUIC connection: ({}) {}", error.code, error.text);
         return false;
     }
 
@@ -222,6 +182,7 @@ void Http3Upstream::close_session() {
     m_quic_conn.reset();
     m_quic_timer.reset();
     m_socket.reset();
+    m_quic_connector.reset();
     m_tcp_connections.clear();
     m_tcp_conn_by_stream_id.clear();
     m_retriable_tcp_requests.clear();
@@ -471,6 +432,31 @@ void Http3Upstream::on_icmp_request(IcmpEchoRequestEvent &event) {
     this->flush_pending_quic_data();
 }
 
+void Http3Upstream::quic_connector_handler(void *arg, QuicConnectorEvent what, void *data) {
+    auto *upstream = (Http3Upstream *) arg;
+    switch (what) {
+    case QUIC_CONNECTOR_EVENT_READY: {
+        log_upstream(upstream, dbg, "QUIC connector ready");
+        if (!upstream->continue_connecting()) {
+            upstream->close_session_inner();
+            break;
+        }
+        upstream->flush_pending_quic_data();
+        break;
+    }
+    case QUIC_CONNECTOR_EVENT_ERROR: {
+        auto *error = (VpnError *) data;
+        log_upstream(upstream, dbg, "Closing session on QUIC connector error: ({}) {}", error->code, error->text);
+        upstream->close_session_inner();
+        break;
+    }
+    case QUIC_CONNECTOR_EVENT_PROTECT:
+        vpn_client::Handler *vpn_handler = &upstream->vpn->parameters.handler;
+        vpn_handler->func(vpn_handler->arg, vpn_client::EVENT_PROTECT_SOCKET, data);
+        break;
+    }
+}
+
 void Http3Upstream::socket_handler(void *arg, UdpSocketEvent what, void *data) {
     auto *upstream = (Http3Upstream *) arg;
 
@@ -486,8 +472,8 @@ void Http3Upstream::socket_handler(void *arg, UdpSocketEvent what, void *data) {
         break;
 
     case UDP_SOCKET_EVENT_TIMEOUT:
-        if (!upstream->m_quic_conn || !quiche_conn_is_established(upstream->m_quic_conn.get())
-                || !upstream->m_h3_conn || upstream->m_health_check_info.has_value()) {
+        if (!upstream->m_quic_conn || !quiche_conn_is_established(upstream->m_quic_conn.get()) || !upstream->m_h3_conn
+                || upstream->m_health_check_info.has_value()) {
             log_upstream(upstream, dbg, "UDP socket timed out, closing session");
             upstream->close_session_inner();
         } else {
@@ -553,7 +539,7 @@ bool Http3Upstream::flush_pending_quic_data() {
     // so it is sufficient to update the idle timeout only here.
     m_idle_timeout_at_ns = now_ns + duration_cast<nanoseconds>(m_max_idle_timeout).count();
 
-    uint8_t out[MAX_QUIC_UDP_PAYLOAD_SIZE];
+    uint8_t out[QUIC_MAX_UDP_PAYLOAD_SIZE];
     while (true) {
         quiche_send_info info{};
         ssize_t r = quiche_conn_send(m_quic_conn.get(), out, sizeof(out), &info);
@@ -622,7 +608,7 @@ void Http3Upstream::on_udp_packet() {
             .to = (sockaddr *) &local_address,
             .to_len = socklen_t(sockaddr_get_size((sockaddr *) &local_address)),
     };
-    uint8_t buffer[MAX_QUIC_UDP_PAYLOAD_SIZE];
+    uint8_t buffer[QUIC_MAX_UDP_PAYLOAD_SIZE];
     for (size_t i = 0; i < READ_BUDGET; ++i) {
         ssize_t r = udp_socket_recv(m_socket.get(), buffer, std::size(buffer));
         if (r <= 0) {
@@ -677,8 +663,8 @@ void Http3Upstream::on_udp_packet() {
 
         m_state = H3US_ESTABLISHED;
         assert(this->vpn->upstream_config.timeout >= this->vpn->upstream_config.health_check_timeout);
-        udp_socket_set_timeout(m_socket.get(),
-                this->vpn->upstream_config.timeout - this->vpn->upstream_config.health_check_timeout);
+        udp_socket_set_timeout(
+                m_socket.get(), this->vpn->upstream_config.timeout - this->vpn->upstream_config.health_check_timeout);
         this->handler.func(this->handler.arg, SERVER_EVENT_SESSION_OPENED, nullptr);
         break;
     }
@@ -1311,4 +1297,49 @@ void Http3Upstream::handle_wake() {
     }
 
     log_upstream(this, dbg, "Done");
+}
+
+bool ag::Http3Upstream::continue_connecting() {
+    assert(m_quic_connector);
+
+    auto result = quic_connector_get_result(m_quic_connector.get());
+    assert(result);
+
+    m_quic_conn = std::move(result->conn);
+
+    SSL_CTX_set_verify(SSL_get_SSL_CTX(result->ssl), SSL_VERIFY_PEER, nullptr);
+    SSL_CTX_set_cert_verify_callback(SSL_get_SSL_CTX(result->ssl), verify_callback, this);
+
+    UdpSocketParameters params = {
+            .ev_loop = this->vpn->parameters.ev_loop,
+            .handler = {socket_handler, this},
+            .timeout = this->vpn->upstream_config.timeout,
+            .peer = this->vpn->upstream_config.endpoint->address,
+            .socket_manager = this->vpn->parameters.network_manager->socket,
+    };
+    m_socket.reset(udp_socket_acquire_fd(&params, result->fd));
+    if (!m_socket) {
+        log_upstream(this, err, "Failed to acquire UDP socket fd");
+        return false;
+    }
+
+    sockaddr_storage local_address = local_sockaddr_from_fd(udp_socket_get_fd(m_socket.get()));
+    quiche_recv_info info{
+            .from = (sockaddr *) &this->vpn->upstream_config.endpoint->address,
+            .from_len = socklen_t(sockaddr_get_size((sockaddr *) &this->vpn->upstream_config.endpoint->address)),
+            .to = (sockaddr *) &local_address,
+            .to_len = socklen_t(sockaddr_get_size((sockaddr *) &local_address)),
+    };
+    ssize_t ret = quiche_conn_recv(m_quic_conn.get(), result->data.data(), result->data.size(), &info);
+    if (ret < 0) {
+        log_upstream(this, dbg, "quiche_conn_recv: ({}) {}", ret, magic_enum::enum_name((quiche_error) ret));
+    }
+    if (quiche_conn_is_closed(m_quic_conn.get())) {
+        log_upstream(this, dbg, "QUIC connection closed");
+        return false;
+    }
+
+    m_quic_connector.reset();
+
+    return true;
 }

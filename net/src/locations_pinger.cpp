@@ -1,15 +1,20 @@
+#include "net/locations_pinger.h"
+
 #include <algorithm>
 #include <cassert>
 #include <iterator>
 #include <list>
+#include <memory>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <magic_enum/magic_enum.hpp>
 
 #include "common/logger.h"
-#include "net/locations_pinger.h"
 #include "net/network_manager.h"
+#include "net/quic_connector.h"
+#include "net/tcp_socket.h"
 #include "net/utils.h"
 #include "ping.h"
 #include "vpn/utils.h"
@@ -22,10 +27,14 @@ struct PingedEndpoint {
     AutoVpnEndpoint endpoint;
     int ping_ms = 0;
     sockaddr_storage relay_address{};
+    bool is_quic = false;
+    void *conn_state = nullptr;
 
-    PingedEndpoint(AutoVpnEndpoint endpoint, int ping_ms, const sockaddr *relay_address)
+    PingedEndpoint(AutoVpnEndpoint endpoint, int ping_ms, const sockaddr *relay_address, bool is_quic, void *conn_state)
             : endpoint{std::move(endpoint)}
-            , ping_ms{ping_ms} {
+            , ping_ms{ping_ms}
+            , is_quic{is_quic}
+            , conn_state{conn_state} {
         if (relay_address) {
             this->relay_address = sockaddr_to_storage(relay_address);
         }
@@ -65,7 +74,10 @@ struct LocationsPinger {
     uint32_t rounds;
     bool use_quic;
     bool anti_dpi;
+    bool handoff;
     sockaddr_storage relay_address_parallel{};
+    uint32_t quic_max_idle_timeout_ms;
+    uint32_t quic_version;
 };
 
 struct FinalizeLocationInfo {
@@ -119,10 +131,27 @@ static constexpr size_t count_of_ip_version(const VpnEndpoints &endpoints, IpVer
     });
 }
 
-static void finalize_location(LocationsPinger *pinger, const FinalizeLocationInfo &info) {
+static void destroy_conn_state(PingedEndpoint &endpoint) {
+    if (endpoint.is_quic) {
+        quic_connector_destroy((QuicConnector *) endpoint.conn_state);
+    } else {
+        tcp_socket_destroy((TcpSocket *) endpoint.conn_state);
+    }
+    endpoint.conn_state = nullptr;
+}
+
+static void finalize_location(LocationsPinger *pinger, FinalizeLocationInfo info) {
     const LocationsCtx *location = &info.location_ctx;
     const PingedEndpoint *selected =
             select_endpoint(location, pinger->query_all_interfaces ? &get_smallest_ping_priority : &get_addr_priority);
+
+    for (auto *v : {&info.location_ctx.pinged_ipv4, &info.location_ctx.pinged_ipv6}) {
+        for (PingedEndpoint &endpoint : *v) {
+            if (std::addressof(endpoint) != selected) {
+                destroy_conn_state(endpoint);
+            }
+        }
+    }
 
     LocationsPingerResultExtra result = {
             .ip_availability =
@@ -137,6 +166,8 @@ static void finalize_location(LocationsPinger *pinger, const FinalizeLocationInf
     };
     result.id = location->info->id;
     if (selected != nullptr) {
+        result.is_quic = selected->is_quic;
+        result.conn_state = selected->conn_state;
         result.ping_ms = selected->ping_ms;
         for (size_t i = 0; i < location->info->endpoints.size; ++i) {
             VpnEndpoint *ep = &location->info->endpoints.data[i];
@@ -165,7 +196,6 @@ static void finalize_location(LocationsPinger *pinger, const FinalizeLocationInf
 }
 
 static std::optional<FinalizeLocationInfo> process_ping_result(LocationsPinger *pinger, const PingResult *result) {
-
     auto i = pinger->locations.find(result->ping);
     if (i == pinger->locations.end()) {
         return std::nullopt;
@@ -182,7 +212,8 @@ static std::optional<FinalizeLocationInfo> process_ping_result(LocationsPinger *
             return vpn_endpoint_equals(a.endpoint.get(), result->endpoint);
         });
         if (it == dst.end()) { // Add new result
-            dst.emplace_back(vpn_endpoint_clone(result->endpoint), result->ms, result->relay_address);
+            dst.emplace_back(vpn_endpoint_clone(result->endpoint), result->ms, result->relay_address, result->is_quic,
+                    result->conn_state);
         } else {
             if (!pinger->query_all_interfaces) {
                 log_location(pinger, ping_get_id(result->ping), warn,
@@ -190,6 +221,9 @@ static std::optional<FinalizeLocationInfo> process_ping_result(LocationsPinger *
                         sockaddr_to_str((sockaddr *) &result->endpoint->address));
             }
             it->ping_ms = std::min(result->ms, it->ping_ms);
+            destroy_conn_state(*it);
+            it->is_quic = result->is_quic;
+            it->conn_state = result->conn_state;
         }
         break;
     }
@@ -221,7 +255,7 @@ static void ping_handler(void *arg, const PingResult *result) {
     auto *pinger = (LocationsPinger *) arg;
 
     if (auto finalize_info = process_ping_result(pinger, result); finalize_info.has_value()) {
-        finalize_location(pinger, finalize_info.value());
+        finalize_location(pinger, std::move(finalize_info.value()));
     }
 }
 
@@ -234,12 +268,13 @@ static void start_location_ping(LocationsPinger *pinger) {
     log_location(pinger, i->info->id, dbg, "Starting location ping");
     PingInfo ping_info = {i->info->id, pinger->loop, {i->info->endpoints.data, i->info->endpoints.size},
             pinger->timeout_ms, {pinger->interfaces.data(), pinger->interfaces.size()}, pinger->rounds,
-            pinger->use_quic, pinger->anti_dpi, {i->info->relay_addresses.data, i->info->relay_addresses.size},
-            pinger->relay_address_parallel};
+            pinger->use_quic, pinger->anti_dpi, pinger->handoff,
+            {i->info->relay_addresses.data, i->info->relay_addresses.size}, pinger->relay_address_parallel,
+            pinger->quic_max_idle_timeout_ms, pinger->quic_version};
     Ping *ping = ping_start(&ping_info, {ping_handler, pinger});
-    if(!ping) {
+    if (!ping) {
         FinalizeLocationInfo info{std::move(*i), pinger->pending_locations.size() == 1 && pinger->locations.empty()};
-        finalize_location(pinger, info);
+        finalize_location(pinger, std::move(info));
     } else {
         pinger->locations.emplace(ping, std::move(*i));
     }
@@ -279,6 +314,9 @@ LocationsPinger *locations_pinger_start(
     pinger->rounds = info->rounds;
     pinger->use_quic = info->use_quic;
     pinger->anti_dpi = info->anti_dpi;
+    pinger->handoff = info->handoff;
+    pinger->quic_max_idle_timeout_ms = info->quic_max_idle_timeout_ms;
+    pinger->quic_version = info->quic_version;
     if (info->relay_address_parallel) {
         pinger->relay_address_parallel = sockaddr_to_storage(info->relay_address_parallel);
     }

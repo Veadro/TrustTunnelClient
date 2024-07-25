@@ -98,13 +98,6 @@ struct SingleUpstreamConnector::Impl {
         }
     }
 
-    static bool is_successful(const void *arg, void *data) {
-        const auto *self = (Impl *) arg;
-        const auto *error = (VpnError *) data;
-        return (error == nullptr || error->code == VPN_EC_NOERROR)
-                && (!self->pending_error.has_value() || self->pending_error->code == VPN_EC_NOERROR);
-    }
-
     static void do_connect(void *arg, void *data) {
         auto *self = (Impl *) arg;
         log_connector(self, trace, "...");
@@ -114,22 +107,6 @@ struct SingleUpstreamConnector::Impl {
         if (!self->upstream->open_session(timeout)) {
             self->pending_error = {VPN_EC_ERROR, "Failed to open session with endpoint"};
         }
-
-        log_connector(self, trace, "Done");
-    }
-
-    static void do_health_check(void *arg, void *) {
-        auto *self = (Impl *) arg;
-        log_connector(self, trace, "...");
-
-        self->deferred_task = event_loop::submit(self->parent.PARAMETERS.ev_loop,
-                {self, [](void *arg, TaskId) {
-                     auto *self = (Impl *) arg;
-                     self->deferred_task.release();
-                     if (VpnError e = self->upstream->do_health_check(); e.code != VPN_EC_NOERROR) {
-                         self->fsm.perform_transition(E_HEALTH_CHECK_READY, &e);
-                     }
-                 }});
 
         log_connector(self, trace, "Done");
     }
@@ -197,9 +174,7 @@ struct SingleUpstreamConnector::Impl {
             {S_DISCONNECTED,        E_SESSION_CLOSED,      Fsm::ANYWAY,    Fsm::DO_NOTHING,   Fsm::SAME_TARGET_STATE, Fsm::DO_NOTHING},
             {S_DISCONNECTED,        E_DISCONNECT,          Fsm::ANYWAY,    Fsm::DO_NOTHING,   Fsm::SAME_TARGET_STATE, Fsm::DO_NOTHING},
 
-            {S_CONNECTING,          E_SESSION_OPENED,      Fsm::ANYWAY,    do_health_check,   Fsm::SAME_TARGET_STATE, Fsm::DO_NOTHING},
-            {S_CONNECTING,          E_HEALTH_CHECK_READY,  is_successful,  Fsm::DO_NOTHING,   S_DISCONNECTED,         raise_connected},
-            {S_CONNECTING,          E_HEALTH_CHECK_READY,  Fsm::OTHERWISE, submit_disconnect, S_DISCONNECTING,        Fsm::DO_NOTHING},
+            {S_CONNECTING,          E_SESSION_OPENED,      Fsm::ANYWAY,    Fsm::DO_NOTHING,   S_DISCONNECTED,         raise_connected},
             {S_CONNECTING,          E_SESSION_CLOSED,      Fsm::ANYWAY,    Fsm::DO_NOTHING,   S_DISCONNECTED,         raise_disconnected},
             {S_CONNECTING,          E_SESSION_ERROR,       Fsm::ANYWAY,    submit_disconnect, S_DISCONNECTING,        Fsm::DO_NOTHING},
 

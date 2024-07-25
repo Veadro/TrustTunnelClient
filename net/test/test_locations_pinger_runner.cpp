@@ -14,6 +14,8 @@
 #include "common/logger.h"
 #include "net/locations_pinger.h"
 #include "net/locations_pinger_runner.h"
+#include "net/quic_connector.h"
+#include "net/tcp_socket.h"
 #include "vpn/utils.h"
 
 using namespace ag;
@@ -595,11 +597,13 @@ TEST_F(LocationsPingerRunnerTest, DISABLED_Live) {
         std::string address;
         std::string relay;
         int ms;
+        bool quic;
     };
     struct Ctx {
         std::mutex mtx;
         int num_errs, num, min, max, avg;
         std::vector<Result> results;
+        bool conn_state_failed;
     };
     Ctx ctx{.min = INT_MAX};
     std::vector<std::thread> ts;
@@ -608,6 +612,7 @@ TEST_F(LocationsPingerRunnerTest, DISABLED_Live) {
     LocationsPingerInfo info{};
     info.locations.size = locations.size();
     info.locations.data = locations.data();
+    info.handoff = true;
     auto *runner = locations_pinger_runner_create(&info,
             {
                     .func =
@@ -615,6 +620,15 @@ TEST_F(LocationsPingerRunnerTest, DISABLED_Live) {
                                 auto *ctx = (Ctx *) arg;
                                 std::scoped_lock l(ctx->mtx);
                                 ++ctx->num;
+
+                                if (!result->conn_state) {
+                                    ctx->conn_state_failed = true;
+                                } else if (result->is_quic) {
+                                    quic_connector_destroy((QuicConnector *) result->conn_state);
+                                } else {
+                                    tcp_socket_destroy((TcpSocket *) result->conn_state);
+                                }
+
                                 if (result->ping_ms < 0) {
                                     ++ctx->num_errs;
                                     ctx->results.emplace_back(
@@ -627,7 +641,7 @@ TEST_F(LocationsPingerRunnerTest, DISABLED_Live) {
                                 ctx->results.emplace_back(Result{result->id, result->endpoint->name,
                                         sockaddr_to_str((sockaddr *) &result->endpoint->address),
                                         result->relay_address ? sockaddr_to_str(result->relay_address) : "none",
-                                        result->ping_ms});
+                                        result->ping_ms, result->is_quic});
                             },
                     .arg = &ctx,
             });
@@ -639,7 +653,8 @@ TEST_F(LocationsPingerRunnerTest, DISABLED_Live) {
     });
 
     for (auto &res : ctx.results) {
-        fmt::print("{:46} {:46} {:46} {:4} ms  {}\n", res.id, res.address, res.relay, res.ms, res.name);
+        fmt::print("{:46} {:46} {:46} {:4} ms  {} {}\n", res.id, res.address, res.relay, res.ms,
+                res.quic ? "QUIC" : " TLS", res.name);
     }
     fmt::print("min: {} ms, avg: {} ms, max: {} ms, errors: {}, endpoints: {}, locations: {}\n", ctx.min, ctx.avg,
             ctx.max, ctx.num_errs, total_endpoints, locations.size());

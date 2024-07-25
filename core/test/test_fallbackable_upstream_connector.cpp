@@ -111,24 +111,6 @@ protected:
     }
 };
 
-TEST_F(FallbackableUpstreamConnectorTest, MainSucceedsBeforeFallbackStart) {
-    VpnError err = m_connector->connect(std::nullopt);
-    ASSERT_EQ(err.code, VPN_EC_NOERROR) << err.text;
-    ASSERT_TRUE(m_main_upstream->called_methods.open_session);
-
-    m_main_upstream->handler.func(m_main_upstream->handler.arg, SERVER_EVENT_SESSION_OPENED, nullptr);
-    this->run_event_loop_once();
-    ASSERT_TRUE(m_main_upstream->called_methods.do_health_check);
-
-    m_main_upstream->handler.func(m_main_upstream->handler.arg, SERVER_EVENT_HEALTH_CHECK_RESULT, nullptr);
-    ASSERT_FALSE(m_fallback_upstream->called_methods.open_session);
-    this->run_event_loop_once();
-    ASSERT_TRUE(m_raised_result.has_value());
-    ASSERT_TRUE(std::holds_alternative<std::unique_ptr<ServerUpstream>>(m_raised_result.value()))
-            << m_raised_result->index();
-    ASSERT_EQ(std::get<std::unique_ptr<ServerUpstream>>(m_raised_result.value()).get(), m_main_upstream);
-}
-
 TEST_F(FallbackableUpstreamConnectorTest, MainSucceedsFasterThanFallback) {
     VpnError err = m_connector->connect(std::nullopt);
     ASSERT_EQ(err.code, VPN_EC_NOERROR) << err.text;
@@ -139,10 +121,6 @@ TEST_F(FallbackableUpstreamConnectorTest, MainSucceedsFasterThanFallback) {
     ASSERT_TRUE(m_fallback_upstream->called_methods.open_session);
 
     m_main_upstream->handler.func(m_main_upstream->handler.arg, SERVER_EVENT_SESSION_OPENED, nullptr);
-    this->run_event_loop_once();
-    ASSERT_TRUE(m_main_upstream->called_methods.do_health_check);
-
-    m_main_upstream->handler.func(m_main_upstream->handler.arg, SERVER_EVENT_HEALTH_CHECK_RESULT, nullptr);
     this->run_event_loop_once();
     ASSERT_TRUE(m_raised_result.has_value());
     ASSERT_TRUE(std::holds_alternative<std::unique_ptr<ServerUpstream>>(m_raised_result.value()))
@@ -161,10 +139,6 @@ TEST_F(FallbackableUpstreamConnectorTest, FallbackSucceedsFasterThanMain) {
 
     m_fallback_upstream->handler.func(m_fallback_upstream->handler.arg, SERVER_EVENT_SESSION_OPENED, nullptr);
     this->run_event_loop_once();
-    ASSERT_TRUE(m_fallback_upstream->called_methods.do_health_check);
-
-    m_fallback_upstream->handler.func(m_fallback_upstream->handler.arg, SERVER_EVENT_HEALTH_CHECK_RESULT, nullptr);
-    this->run_event_loop_once();
     ASSERT_TRUE(m_raised_result.has_value());
     ASSERT_TRUE(std::holds_alternative<std::unique_ptr<ServerUpstream>>(m_raised_result.value()))
             << m_raised_result->index();
@@ -182,10 +156,6 @@ TEST_F(FallbackableUpstreamConnectorTest, MainFailsFallbackSucceeds) {
 
     m_main_upstream->handler.func(m_main_upstream->handler.arg, SERVER_EVENT_SESSION_CLOSED, nullptr);
     m_fallback_upstream->handler.func(m_fallback_upstream->handler.arg, SERVER_EVENT_SESSION_OPENED, nullptr);
-    this->run_event_loop_once();
-    ASSERT_TRUE(m_fallback_upstream->called_methods.do_health_check);
-
-    m_fallback_upstream->handler.func(m_fallback_upstream->handler.arg, SERVER_EVENT_HEALTH_CHECK_RESULT, nullptr);
     this->run_event_loop_once();
     ASSERT_TRUE(m_raised_result.has_value());
     ASSERT_TRUE(std::holds_alternative<std::unique_ptr<ServerUpstream>>(m_raised_result.value()))

@@ -56,9 +56,11 @@ typedef struct {
 
 typedef struct {
     const sockaddr *peer; // should be null if `tcp_socket_acquire_fd` was called before
-    SSL *ssl; // SSL context in case of the traffic needs to be encrypted (should be null if `socket_acquire_ssl` was
-              // called before)
+    SSL *ssl; // SSL context in case of the traffic needs to be encrypted
     bool anti_dpi; // Enable anti-DPI protection
+    bool pause_tls; // Pause the TLS handshake and raise `TCP_SOCKET_EVENT_CONNECTED` after receiving the
+                    // first bytes from server. Continue the handshake by calling `tcp_socket_connect_continue`.
+                    // `TCP_SOCKET_EVENT_CONNECTED` will be raised one more time when the handshake is complete.
 } TcpSocketConnectParameters;
 
 /**
@@ -75,18 +77,35 @@ TcpSocket *tcp_socket_create(const TcpSocketParameters *parameters);
 void tcp_socket_destroy(TcpSocket *socket);
 
 /**
- * Send RST on socket close
- * @param socket socket
+ * Configure whether RST should be sent on socket close
  */
-void tcp_socket_set_rst(TcpSocket *socket);
+void tcp_socket_set_rst(TcpSocket *socket, bool rst);
 
 /**
  * Connect to peer
+ *
+ * The socket can be instructed to pause the TLS handshake by setting `TcpSocketConnectParameters::pause_tls`.
+ * A `TCP_SOCKET_EVENT_CONNECTED` will be raised upon receiving the first bytes from the server, but before
+ * proceeding with the handshake. The handshake can then be resumed by calling `tcp_socket_connect_continue`.
+ * A `TCP_SOCKET_EVENT_CONNECTED` will be raised again on successful handshake completion. This way, a half-open
+ * connection can be handed off from the locations pinger to the upstream to save some network round trips.
+ *
  * @param socket socket
  * @param param see `tcp_socket_connect_param_t`
  * @return 0 code error in case of success, non-zero otherwise
  */
 VpnError tcp_socket_connect(TcpSocket *socket, const TcpSocketConnectParameters *param);
+
+/**
+ * If there is a paused TLS handshake, replace socket parameters with `params` and continue
+ * the handshake, otherwise, return an error.
+ *
+ * Windows note: the value of `params->record_estats` is ignored, the state of the extended
+ * statistics remains as it was at socket creation.
+ *
+ * @return 0 code error in case of success, non-zero otherwise
+ */
+VpnError tcp_socket_connect_continue(TcpSocket *socket, const TcpSocketParameters *params);
 
 /**
  * Wrap fd in socket entity (fd will be closed with socket in `tcp_socket_destroy`).
@@ -130,6 +149,12 @@ VpnError tcp_socket_write(TcpSocket *socket, const uint8_t *data, size_t length)
  * @return descriptor, -1 if there is no underlying descriptor
  */
 evutil_socket_t tcp_socket_get_fd(const TcpSocket *socket);
+
+/**
+ * Return a non-owning pointer to the socket's SSL object,
+ * or `nullptr` if there is none.
+ */
+SSL *tcp_socket_get_ssl(TcpSocket *socket);
 
 /**
  * Set timeout value for operations

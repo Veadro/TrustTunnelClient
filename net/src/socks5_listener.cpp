@@ -692,7 +692,7 @@ void socks5_listener_close_connection(Socks5Listener *listener, uint64_t id, boo
     if (i != kh_end(listener->connections)) {
         Connection *conn = kh_value(listener->connections, i);
         if (!graceful && conn->proto == IPPROTO_TCP) {
-            tcp_socket_set_rst(conn->socket.get());
+            tcp_socket_set_rst(conn->socket.get(), true);
         }
 
         Socks5ConnectionClosedEvent event = {conn->id, {}};
