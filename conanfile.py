@@ -125,4 +125,4 @@ class VpnLibsConan(ConanFile):
         elif self.settings.os != 'Android':
             self.cpp_info.system_libs = ["resolv"]
         if is_apple_os(self):
-            self.cpp_info.frameworks = ['Foundation', 'SystemConfiguration']
+            self.cpp_info.frameworks = ['Foundation', 'SystemConfiguration', 'Security']
