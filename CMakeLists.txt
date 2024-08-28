@@ -12,6 +12,10 @@ if (NOT quiche_DIR)
     set(DISABLE_HTTP3 ON)
 endif()
 
+if (DISABLE_HTTP3)
+    add_compile_definitions(DISABLE_HTTP3)
+endif ()
+
 if (MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
     set(CompilerFlags CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE CMAKE_CXX_FLAGS_RELWITHDEBINFO

@@ -53,9 +53,6 @@ set_target_properties(vpnlibs_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if (MSVC)
     target_compile_definitions(vpnlibs_core PRIVATE _UNICODE UNICODE)
 endif()
-if (DISABLE_HTTP3)
-    target_compile_definitions(vpnlibs_core PUBLIC DISABLE_HTTP3)
-endif()
 
 target_include_directories(vpnlibs_core PUBLIC include)
 

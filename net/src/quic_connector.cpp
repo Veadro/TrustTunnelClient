@@ -1,5 +1,27 @@
 #include "net/quic_connector.h"
 
+#ifdef DISABLE_HTTP3
+
+#include <cstdlib>
+
+ag::QuicConnector *ag::quic_connector_create(const QuicConnectorParameters *) {
+    abort();
+}
+
+void ag::quic_connector_destroy(QuicConnector *connector) {
+    abort();
+}
+
+ag::VpnError ag::quic_connector_connect(QuicConnector *, const QuicConnectorConnectParameters *) {
+    abort();
+}
+
+std::optional<ag::QuicConnectorResult> ag::quic_connector_get_result(QuicConnector *) {
+    abort();
+}
+
+#else // DISABLE_HTTP3
+
 #include <algorithm>
 #include <cassert>
 #include <chrono>
@@ -231,3 +253,5 @@ void report_ready(ag::QuicConnector *self) {
     }
     do_report(self);
 }
+
+#endif // DISABLE_HTTP3

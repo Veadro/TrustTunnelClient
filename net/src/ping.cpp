@@ -562,9 +562,11 @@ Ping *ping_start(const PingInfo *info, PingHandler handler) {
     self->relay_addresses.insert(
             self->relay_addresses.begin(), info->relay_addresses.rbegin(), info->relay_addresses.rend());
 
+#ifndef DISABLE_HTTP3
     self->quic_max_idle_timeout_ms =
             info->quic_max_idle_timeout_ms ? info->quic_max_idle_timeout_ms : 10 * DEFAULT_PING_TIMEOUT_MS;
     self->quic_version = info->quic_version ? info->quic_version : QUICHE_PROTOCOL_VERSION;
+#endif
 
     constexpr uint32_t DEFAULT_IF_IDX = 0;
     std::span<const uint32_t> interfaces = info->interfaces_to_query;

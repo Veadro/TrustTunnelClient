@@ -5,7 +5,10 @@
 #include <span>
 
 #include <event2/util.h>
+
+#ifndef DISABLE_HTTP3
 #include <quiche.h>
+#endif
 
 #include "common/defs.h"
 #include "net/socket_manager.h"
@@ -53,12 +56,16 @@ struct QuicConnectorConnectParameters {
     uint32_t quic_version;
 };
 
+#ifndef DISABLE_HTTP3
 struct QuicConnectorResult {
     evutil_socket_t fd;                               // UDP socket's file descriptor.
     ag::DeclPtr<quiche_conn, &quiche_conn_free> conn; // Owning pointer to a QUIC connection object.
     SSL *ssl;       // Non-owning pointer to the SSL object owned by the QUIC connection object.
     Uint8Span data; // The first UDP payload received from the server. Valid until the connector is destroyed.
 };
+#else
+struct QuicConnectorResult {};
+#endif
 
 QuicConnector *quic_connector_create(const QuicConnectorParameters *parameters);
 
