@@ -125,6 +125,7 @@ struct SystemDnsServer {
 struct SystemDnsServers {
     std::vector<SystemDnsServer> main;
     std::vector<std::string> fallback;
+    std::vector<std::string> bootstrap;
 };
 
 /**

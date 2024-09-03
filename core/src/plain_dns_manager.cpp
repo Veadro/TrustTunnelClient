@@ -902,6 +902,7 @@ bool ag::PlainDnsManager::start_dns_proxy(SystemDnsServers servers) {
     m_system_dns_proxy = std::make_unique<DnsProxyAccessor>(DnsProxyAccessor::Parameters{
             .upstreams = std::move(upstreams),
             .fallbacks = std::move(servers.fallback),
+            .bootstraps = std::move(servers.bootstrap),
             .cert_verify_handler = this->ag::ServerUpstream::vpn->parameters.cert_verify_handler,
     });
 

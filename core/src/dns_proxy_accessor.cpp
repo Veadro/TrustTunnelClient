@@ -1,4 +1,7 @@
 #include <algorithm>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include <magic_enum/magic_enum.hpp>
 
@@ -11,6 +14,7 @@
 #include "common/defs.h"
 #include "common/logger.h"
 #include "net/network_manager.h"
+#include "net/utils.h"
 #include "vpn/internal/dns_proxy_accessor.h"
 
 #define log_accessor(r_, lvl_, fmt_, ...) lvl_##log((r_)->m_log, fmt_, ##__VA_ARGS__)
@@ -22,8 +26,13 @@ static dns::DnsProxySettings make_dns_proxy_settings(const DnsProxyAccessor::Par
     settings.upstreams.clear();
     settings.upstreams.reserve(parameters.upstreams.size());
     uint32_t outbound_interface = vpn_network_manager_get_outbound_interface();
+
+    auto bootstrap_dns = !parameters.bootstraps.empty()
+            ? parameters.bootstraps
+            : std::vector<std::string>{std::begin(AG_UNFILTERED_DNS_IPS_V4), std::end(AG_UNFILTERED_DNS_IPS_V4)};
+
     std::transform(parameters.upstreams.begin(), parameters.upstreams.end(), std::back_inserter(settings.upstreams),
-            [id = 0, outbound_interface](const DnsProxyAccessor::Upstream &upstream) mutable {
+            [id = 0, outbound_interface, &bootstrap_dns](const DnsProxyAccessor::Upstream &upstream) mutable {
                 IpAddress resolved_host;
                 if (upstream.resolved_host.has_value()) {
                     uint8_t *data = nullptr;
@@ -39,7 +48,7 @@ static dns::DnsProxySettings make_dns_proxy_settings(const DnsProxyAccessor::Par
 
                 return dns::UpstreamOptions{
                         .address = upstream.address,
-                        .bootstrap = {std::begin(AG_UNFILTERED_DNS_IPS_V4), std::end(AG_UNFILTERED_DNS_IPS_V4)},
+                        .bootstrap = bootstrap_dns,
                         .resolved_server_ip = resolved_host,
                         .id = id++,
                         .outbound_interface =

@@ -31,6 +31,8 @@ public:
         std::vector<Upstream> upstreams;
         /// Fallbacks to support failing resolvers
         std::vector<std::string> fallbacks;
+        /// Bootstraps DNS servers used for initial resolution
+        std::vector<std::string> bootstraps;
         /// The address which the outbound proxy for the DNS proxy is listening on
         std::optional<sockaddr_storage> socks_listener_address;
         /// Certificate verification handler
