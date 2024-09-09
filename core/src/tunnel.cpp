@@ -1469,6 +1469,13 @@ void Tunnel::on_exclusions_updated() {
             EXCLUSIONS_RESOLVE_PERIOD);
 }
 
+bool Tunnel::should_complete_immediately(uint64_t client_id) const {
+    const VpnConnection *conn = vpn_connection_get_by_id(this->connections.by_client_id, client_id);
+    // In general mode, conection requests suspected to be to an exclusion host should be completed
+    // immediately -- don't wait for recovery to bypass a connection. In selective mode, it's the opposite.
+    return conn && (conn->flags.test(CONNF_SUSPECT_EXCLUSION) == (vpn->exclusions_mode == VPN_MODE_GENERAL));
+}
+
 static VpnAddress tunnel_to_vpn_address(const TunnelAddress *tunnel) {
     VpnAddress vpn = {};
 

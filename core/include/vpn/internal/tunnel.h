@@ -77,6 +77,12 @@ struct Tunnel {
     void on_exclusions_updated();
 
     /**
+     * Return `true` if connection request `client_id` should be completed immediately
+     * (i.e. should not be postponed until recovery ends).
+     */
+    bool should_complete_immediately(uint64_t client_id) const;
+
+    /**
      * @param request_result The connection request result
      * @return Some value if connection should definitely be routed to some upstream.
      *         Otherwise, if upstream can be changed in the future (e.g. if the destination address

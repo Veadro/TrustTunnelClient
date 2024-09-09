@@ -600,6 +600,7 @@ void VpnClient::process_client_packets(VpnPackets packets) {
 
 void VpnClient::update_exclusions(VpnMode mode, std::string_view exclusions) {
     log_client(this, dbg, "Mode={}", magic_enum::enum_name(mode));
+    this->exclusions_mode = mode;
     this->domain_filter.update_exclusions(mode, exclusions);
     if (this->fsm.get_state() == vpn_client::S_CONNECTED) {
         this->tunnel->on_exclusions_updated();

@@ -168,6 +168,7 @@ public:
     sockaddr_storage socks_listener_address{}; // The address the SOCKS listener is bound to
     bool bypass_upstream_session_opened = false;
     bool in_disconnect = false;
+    VpnMode exclusions_mode = VPN_MODE_GENERAL;
 
     // One of these is handed off from the pinger. An upstream can then snatch it up.
     ag::DeclPtr<QuicConnector, &quic_connector_destroy> quic_connector;

@@ -484,7 +484,8 @@ static bool can_complete(const void *ctx, void *data) {
     }
     const auto *vpn = (Vpn *) ctx;
     auto state = VpnSessionState(vpn->fsm.get_state());
-    return state == VPN_SS_CONNECTED || state == VPN_SS_CONNECTING || state == VPN_SS_DISCONNECTED;
+    return state == VPN_SS_CONNECTED || state == VPN_SS_CONNECTING || state == VPN_SS_DISCONNECTED
+            || state == VPN_SS_WAITING_FOR_NETWORK || vpn->client.tunnel->should_complete_immediately(result->id);
 }
 
 static bool is_kill_switch_on(const void *ctx, void *) {
