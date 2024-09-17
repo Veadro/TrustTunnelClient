@@ -1253,6 +1253,15 @@ void Tunnel::complete_connect_request(uint64_t id, std::optional<VpnConnectActio
         return;
     }
 
+    if (vpn_handler_profiling_enabled()) {
+        auto now = std::chrono::high_resolution_clock::now();
+        int64_t dt = std::chrono::duration_cast<std::chrono::nanoseconds>(now - conn->requested_at).count();
+        if (int64_t threshold = vpn_handler_profiling_threshold_ns(); dt > threshold) {
+            log_tun(this, warn, "Connection request [L:{}] completed after {} ms, threshold: {} ms", conn->client_id,
+                    dt / 1'000'000.0, threshold / 1'000'000.0);
+        }
+    }
+
     switch (action.value_or(VPN_CA_DEFAULT)) {
     case VPN_CA_FORCE_BYPASS:
         conn->flags.set(CONNF_FORCIBLY_BYPASSED);
@@ -1520,6 +1529,9 @@ void Tunnel::listener_handler(const std::shared_ptr<ClientListener> &listener, C
         conn->listener = listener;
         conn->app_name = client_event->app_name;
         conn->flags.set(CONNF_FIRST_PACKET);
+        if (vpn_handler_profiling_enabled()) {
+            conn->requested_at = std::chrono::high_resolution_clock::now();
+        }
 
         log_conn(this, conn, dbg, "New client connection request: {}->{} (proto: {})",
                 sockaddr_to_str(client_event->src), tunnel_addr_to_str(&client_event_addr.dst), client_event->protocol);

@@ -1,5 +1,10 @@
 # CHANGELOG
 
+* [Feature] Add an option to profile VPN handler execution: if enabled, a warning will be written to the log
+  whenever a handler call is taking too long. Profiling is enabled by default. Applications might want to disable
+  it when running in production.
+    * See `ag::vpn_handler_profiling_set_enabled`.
+
 ## 0.92.182
 
 * [Feature] The library now notify an application with information about connection. This event contain info

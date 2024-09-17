@@ -738,5 +738,17 @@ WIN_EXPORT VpnListener *vpn_create_tun_listener(Vpn *vpn, const VpnTunListenerCo
 /** Create a SOCKS listener. */
 WIN_EXPORT VpnListener *vpn_create_socks_listener(Vpn *vpn, const VpnSocksListenerConfig *config);
 
+/**
+ * Enable or disable profiling of VPN handlers.
+ * This function should be called before any VPN instances have been created.
+ */
+WIN_EXPORT void vpn_handler_profiling_set_enabled(bool enabled);
+
+/** Return `true` if handler profiling is enabled, `false` otherwise. */
+bool vpn_handler_profiling_enabled();
+
+/** Return the handler profiling threshold in nanoseconds. */
+uint32_t vpn_handler_profiling_threshold_ns();
+
 } // extern "C"
 } // namespace ag

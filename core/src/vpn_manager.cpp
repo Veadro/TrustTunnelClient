@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <atomic>
-#include <condition_variable>
+#include <chrono>
+
+#include <magic_enum/magic_enum.hpp>
 
 #include "socks_listener.h"
 #include "tun_device_listener.h"
@@ -23,10 +25,20 @@ using namespace std::chrono;
 
 static std::atomic_int g_next_id = 0;
 
+static constexpr uint32_t DEFAULT_HANDLER_PROFILING_THRESHOLD_NS = 5'000'000; // 5 milliseconds
+
+static std::atomic_bool g_handler_profiling_enabled = true;
+
+struct ProfilingVpnHandlerCtx {
+    VpnHandler handler;
+    Vpn *vpn;
+};
+
 static int ssl_verify_callback(const char *host_name, const sockaddr *host_ip, X509_STORE_CTX *ctx, void *arg);
 static void client_handler(void *arg, vpn_client::Event what, void *data);
 static void shutdown_cb(Vpn *vpn);
 static const char *check_address(const sockaddr_storage *addr);
+static void profiling_vpn_handler(void *arg, VpnEvent what, void *data);
 
 static constexpr auto STATE_NAMES = make_enum_names_array<VpnSessionState>();
 static constexpr auto EVENT_NAMES = make_enum_names_array<vpn_fsm::ConnectEvent>();
@@ -223,7 +235,12 @@ Vpn *vpn_open(const VpnSettings *settings) {
         return nullptr;
     }
 
-    vpn->handler = settings->handler;
+    if (vpn_handler_profiling_enabled()) {
+        vpn->handler.func = &profiling_vpn_handler;
+        vpn->handler.arg = new ProfilingVpnHandlerCtx{.handler = settings->handler, .vpn = vpn.get()};
+    } else {
+        vpn->handler = settings->handler;
+    }
 
     VpnError error = vpn->client.init(settings);
     if (error.code == VPN_EC_NOERROR) {
@@ -425,6 +442,10 @@ void vpn_close(Vpn *vpn) {
 
     log_vpn(vpn, info, "...");
     vpn->client.deinit();
+
+    if (vpn->handler.func == &profiling_vpn_handler) {
+        delete (ProfilingVpnHandlerCtx *) vpn->handler.arg;
+    }
 
     log_vpn(vpn, info, "Done");
     delete vpn;
@@ -847,6 +868,30 @@ sockaddr_storage vpn_get_socks_listener_address(Vpn *vpn) {
         ret = vpn->client.socks_listener_address;
     });
     return ret;
+}
+
+void vpn_handler_profiling_set_enabled(bool enabled) {
+    g_handler_profiling_enabled.store(enabled, std::memory_order_relaxed);
+}
+
+bool vpn_handler_profiling_enabled() {
+    return g_handler_profiling_enabled.load(std::memory_order_relaxed);
+}
+
+uint32_t vpn_handler_profiling_threshold_ns() {
+    return DEFAULT_HANDLER_PROFILING_THRESHOLD_NS;
+}
+
+void profiling_vpn_handler(void *arg, VpnEvent what, void *data) {
+    auto *ctx = (ProfilingVpnHandlerCtx *) arg;
+    auto start = high_resolution_clock::now();
+    ctx->handler.func(ctx->handler.arg, what, data);
+    auto end = high_resolution_clock::now();
+    int64_t dt = duration_cast<nanoseconds>(end - start).count();
+    if (int64_t threshold = vpn_handler_profiling_threshold_ns(); dt > threshold) {
+        log_vpn(ctx->vpn, warn, "Handler for {} ran for {} ms, threshold: {} ms", magic_enum::enum_name(what),
+                dt / 1'000'000.0, threshold / 1'000'000.0);
+    }
 }
 
 } // namespace ag

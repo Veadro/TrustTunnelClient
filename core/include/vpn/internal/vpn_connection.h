@@ -1,6 +1,7 @@
 #pragma once
 
 #include <bitset>
+#include <chrono>
 #include <cstdint>
 #include <list>
 #include <memory>
@@ -87,6 +88,7 @@ struct VpnConnection {
     event_loop::AutoTaskId send_buffered_task;
     int lookup_attempts_num = 0;
     std::optional<VpnConnectAction> action;
+    std::chrono::high_resolution_clock::time_point requested_at{};
 
     static VpnConnection *make(uint64_t client_id, TunnelAddressPair addr, int proto);
 
