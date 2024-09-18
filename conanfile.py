@@ -121,7 +121,7 @@ class VpnLibsConan(ConanFile):
             "vpnlibs_standalone",
         ]
         if self.settings.os == "Windows":
-            self.cpp_info.system_libs = ["ws2_32", "crypt32", "userenv", "version"]
+            self.cpp_info.system_libs = ["ws2_32", "crypt32", "userenv", "version", "Fwpuclnt"]
         elif self.settings.os != 'Android':
             self.cpp_info.system_libs = ["resolv"]
         if is_apple_os(self):
