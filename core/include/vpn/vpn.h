@@ -745,10 +745,10 @@ WIN_EXPORT VpnListener *vpn_create_socks_listener(Vpn *vpn, const VpnSocksListen
 WIN_EXPORT void vpn_handler_profiling_set_enabled(bool enabled);
 
 /** Return `true` if handler profiling is enabled, `false` otherwise. */
-bool vpn_handler_profiling_enabled();
+WIN_EXPORT bool vpn_handler_profiling_enabled();
 
 /** Return the handler profiling threshold in nanoseconds. */
-uint32_t vpn_handler_profiling_threshold_ns();
+WIN_EXPORT uint32_t vpn_handler_profiling_threshold_ns();
 
 } // extern "C"
 } // namespace ag
