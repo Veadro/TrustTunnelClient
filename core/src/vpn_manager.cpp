@@ -879,6 +879,10 @@ uint32_t vpn_handler_profiling_threshold_ns() {
 
 void profiling_vpn_handler(void *arg, VpnEvent what, void *data) {
     auto *ctx = (ProfilingVpnHandlerCtx *) arg;
+    if (what == VPN_EVENT_CLIENT_OUTPUT) {
+        ctx->handler.func(ctx->handler.arg, what, data);
+        return;
+    }
     auto start = high_resolution_clock::now();
     ctx->handler.func(ctx->handler.arg, what, data);
     auto end = high_resolution_clock::now();
