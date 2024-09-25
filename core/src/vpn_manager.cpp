@@ -687,6 +687,10 @@ VpnDnsUpstreamValidationStatus vpn_validate_dns_upstream(const char *address) {
 void vpn_process_client_packets(Vpn *vpn, VpnPackets packets) {
     std::unique_lock l(vpn->stop_guard);
 
+    if (!vpn_get_event_loop(vpn)) {
+        return;
+    }
+
     vpn->submit([vpn, packets_holder = std::make_shared<VpnPacketsHolder>(packets)]() mutable {
         auto packets = packets_holder->release();
         vpn->client.process_client_packets({packets.data(), (uint32_t) packets.size()});
