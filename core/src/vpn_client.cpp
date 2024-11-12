@@ -569,6 +569,9 @@ void VpnClient::finalize_disconnect() {
 void VpnClient::deinit() {
     log_client(this, dbg, "...");
 
+    this->quic_connector.reset();
+    this->tcp_socket.reset();
+
     if (this->ssl_session_storage_path.has_value()) {
         dump_session_cache(*this->ssl_session_storage_path);
     }
