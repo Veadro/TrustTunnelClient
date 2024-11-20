@@ -35,6 +35,7 @@ else
 		-DCMAKE_C_COMPILER="clang" \
 		-DCMAKE_CXX_COMPILER="clang++" \
 		-DCMAKE_CXX_FLAGS="-stdlib=libc++" \
+		-GNinja \
 		..
 endif
 	cmake --build $(BUILD_DIR) --target vpnlibs_core
@@ -48,7 +49,6 @@ build_standalone_client: build_libs
 ## Build the setup wizard binary for the VPN client
 build_wizard:
 	cmake --build $(BUILD_DIR) --target setup_wizard
-
 .PHONY: all
 ## Build all binaries
 all: build_standalone_client build_wizard
@@ -57,8 +57,8 @@ all: build_standalone_client build_wizard
 ## Build and copy all binaries in the specified directory
 build_and_export_bin: build_standalone_client build_wizard
 	mkdir -p $(EXPORT_DIR)
-	cp $(BUILD_DIR)/standalone_client/standalone_client \
-		$(BUILD_DIR)/standalone_client/setup_wizard \
+	cp $(BUILD_DIR)/standalone/standalone_client \
+		$(BUILD_DIR)/standalone/setup_wizard \
 		$(EXPORT_DIR)
 	@echo "Binaries are stored in $(EXPORT_DIR)"
 

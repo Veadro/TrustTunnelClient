@@ -67,6 +67,17 @@ It supports Linux, macOS, and Windows platforms.
 
 ### Building
 
+#### For python externally managed environments 
+
+You might get an error where Python will report some missing modules such as 
+
+```shell
+ModuleNotFoundError: No module named 'yaml'
+```
+
+Some Python installations don't support global modules anymore. 
+In this case it is recommended to use Python virtual environment for building. To do so, follow instructions from the [official python documentation](https://docs.python.org/3/library/venv.html). You'll need to install missing modules inside this virtual environment.
+
 #### Using Makefile
 
 This command builds and exports required binaries to the `bin` directory:
