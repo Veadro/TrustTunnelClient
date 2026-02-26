@@ -43,22 +43,34 @@ static std::string streamable_to_string(const T &obj) {
     return stream.str();
 }
 
-static UniquePtr<X509_STORE, &X509_STORE_free> load_certificate(std::string_view pem_certificate) {
-    UniquePtr<BIO, &BIO_free> bio{BIO_new_mem_buf(pem_certificate.data(), (long) pem_certificate.size())};
-
-    UniquePtr<X509, &X509_free> cert{PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr)};
-    if (cert == nullptr) {
-        warnlog(g_logger, "Failed to parse certificate, ensure it is in PEM format");
+static UniquePtr<X509_STORE, &X509_STORE_free> load_certificate(std::string_view pem_bundle) {
+    UniquePtr<BIO, &BIO_free> bio{BIO_new_mem_buf(pem_bundle.data(), static_cast<int>(pem_bundle.size()))};
+    if (!bio) {
         return nullptr;
     }
 
     UniquePtr<X509_STORE, &X509_STORE_free> store{tls_create_ca_store()};
-    if (store == nullptr) {
+    if (!store) {
         warnlog(g_logger, "Failed to create CA store");
         return nullptr;
     }
 
-    X509_STORE_add_cert(store.get(), cert.get());
+    for (;;) {
+        UniquePtr<X509, &X509_free> cert{PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr)};
+        if (!cert) {
+            warnlog(g_logger, "Failed to parse certificate, ensure it is in PEM format");
+            break;
+        }
+
+        if (X509_check_ca(cert.get()) == 0) {
+            continue;
+        }
+
+        if (X509_STORE_add_cert(store.get(), cert.get()) != 1) {
+            warnlog(g_logger, "Failed to add to the CA store");
+            return nullptr;
+        }
+    }
 
     return store;
 }
