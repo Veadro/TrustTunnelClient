@@ -669,7 +669,7 @@ dependencies = [
  "serde",
  "toml",
  "toml_edit",
- "trusttunnel-deeplink 0.1.0 (git+https://github.com/TrustTunnel/TrustTunnel?tag=v1.0.9)",
+ "trusttunnel-deeplink",
  "trusttunnel-settings",
  "windres",
  "x509-parser",
@@ -836,23 +836,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "trusttunnel-deeplink"
-version = "0.1.0"
-source = "git+https://github.com/TrustTunnel/TrustTunnel#8d5f207a38a7be66e7cb5dfa5f41cb9e24edd507"
-dependencies = [
- "base64",
- "hex",
- "rustls-pemfile",
- "thiserror",
-]
-
-[[package]]
 name = "trusttunnel-deeplink-ffi"
 version = "0.1.0"
 dependencies = [
  "serde",
  "toml",
- "trusttunnel-deeplink 0.1.0 (git+https://github.com/TrustTunnel/TrustTunnel?tag=v1.0.9)",
+ "trusttunnel-deeplink",
  "trusttunnel-settings",
 ]
 
@@ -861,7 +850,7 @@ name = "trusttunnel-settings"
 version = "0.1.0"
 dependencies = [
  "serde",
- "trusttunnel-deeplink 0.1.0 (git+https://github.com/TrustTunnel/TrustTunnel)",
+ "trusttunnel-deeplink",
 ]
 
 [[package]]
