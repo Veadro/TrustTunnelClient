@@ -31,6 +31,8 @@ struct TrustTunnelConfig {
         bool skip_verification = false;
         bool anti_dpi = false;
         bool has_ipv6 = false;
+        uint32_t health_check_timeout_ms = 0;
+        uint32_t timeout_ms = 0;
     };
 
     struct SocksListener {

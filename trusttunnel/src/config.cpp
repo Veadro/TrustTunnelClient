@@ -103,6 +103,8 @@ static std::optional<TrustTunnelConfig::Location> build_endpoint(const toml::tab
     location.skip_verification = config["skip_verification"].value_or(false);
     location.anti_dpi = config["anti_dpi"].value_or(false);
     location.has_ipv6 = config["has_ipv6"].value_or(true);
+    location.health_check_timeout_ms = config["health_check_timeout_ms"].value_or<uint32_t>(0);
+    location.timeout_ms = config["timeout_ms"].value_or<uint32_t>(0);
     if (std::optional x = config["certificate"].value<std::string>();
             !location.skip_verification && x.has_value() && !x->empty()) {
         location.ca_store = load_certificate(*x);

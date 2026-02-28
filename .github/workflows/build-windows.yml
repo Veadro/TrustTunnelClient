@@ -1,0 +1,81 @@
+name: Build Windows Client
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build-windows-x64:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action/setup@v1
+        with:
+          toolchain: "1.85"
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Conan
+        run: pip install conan
+
+      - name: Install build tools (Ninja, NASM, Perl)
+        run: choco install ninja nasm strawberryperl -y
+
+      - name: Add NASM to PATH
+        run: echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: Bootstrap Conan dependencies
+        run: python scripts/bootstrap_conan_deps.py
+
+      - name: Configure CMake
+        run: |
+          mkdir build
+          cmake -S . -B build `
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo `
+            -DCMAKE_C_COMPILER="cl.exe" `
+            -DCMAKE_CXX_COMPILER="cl.exe" `
+            -G Ninja
+
+      - name: Build trusttunnel_client
+        run: cmake --build build --target trusttunnel_client
+
+      - name: Build setup_wizard
+        run: cmake --build build --target setup_wizard
+
+      - name: Download wintun
+        run: |
+          Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile wintun.zip
+          Expand-Archive -Path wintun.zip -DestinationPath wintun
+
+      - name: Package artifacts
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item build/trusttunnel/trusttunnel_client.exe release/
+          Copy-Item build/trusttunnel/setup_wizard.exe release/
+          Copy-Item wintun/wintun/bin/amd64/wintun.dll release/
+          Copy-Item LICENSE release/LICENSE.txt
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: trusttunnel-client-windows-x64
+          path: release/

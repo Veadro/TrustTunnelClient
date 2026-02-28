@@ -250,6 +250,8 @@ Error<TrustTunnelClient::ConnectResultError> TrustTunnelClient::connect_to_serve
                                             .endpoints = {endpoints.data(), uint32_t(endpoints.size())},
                                             .relays = {relays.data(), uint32_t(relays.size())},
                                     },
+                            .timeout_ms = m_config.location.timeout_ms,
+                            .health_check_timeout_ms = m_config.location.health_check_timeout_ms,
                             .username = m_config.location.username.c_str(),
                             .password = m_config.location.password.c_str(),
                             .anti_dpi = m_config.location.anti_dpi,
